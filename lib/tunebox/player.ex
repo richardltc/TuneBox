@@ -8,6 +8,7 @@ defmodule TuneBox.Player do
   def pause, do: GenServer.cast(__MODULE__, :pause)
   def rewind, do: GenServer.cast(__MODULE__, {:seek, -10})
   def fast_forward, do: GenServer.cast(__MODULE__, {:seek, 10})
+  def stop, do: GenServer.cast(__MODULE__, :stop)
 
   # --- Server Callbacks ---
   @impl true
@@ -71,6 +72,14 @@ defmodule TuneBox.Player do
   @impl true
   def handle_cast(:pause, state) do
     command = %{command: ["cycle", "pause"]} |> Jason.encode!()
+    IO.puts("Sending command: #{command}")
+    send_to_mpv(state.socket, command)
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_cast(:stop, state) do
+    command = %{command: ["stop"]} |> Jason.encode!()
     IO.puts("Sending command: #{command}")
     send_to_mpv(state.socket, command)
     {:noreply, state}
