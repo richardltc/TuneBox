@@ -6,15 +6,15 @@ defmodule TuneBox.Player do
   def start_link(opts \\ []), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   def play(file), do: GenServer.cast(__MODULE__, {:play, file})
   def pause, do: GenServer.cast(__MODULE__, :pause)
+  def stop, do: GenServer.cast(__MODULE__, :stop)
   def rewind, do: GenServer.cast(__MODULE__, {:seek, -10})
   def fast_forward, do: GenServer.cast(__MODULE__, {:seek, 10})
-  def stop, do: GenServer.cast(__MODULE__, :stop)
 
   # --- Server Callbacks ---
   @impl true
   def init(_opts) do
     mpv_path = System.find_executable("mpv")
-    socket_path = "/tmp/mpv-socket-#{:os.getpid()}"
+    {socket_path, socket_type} = get_socket_config()
 
     # Clean up any existing socket
     File.rm(socket_path)
@@ -40,11 +40,25 @@ defmodule TuneBox.Player do
     # Wait a bit for the socket to be created
     Process.send_after(self(), :check_socket, 100)
 
-    {:ok, %{port: port, socket_path: socket_path, socket: nil}}
+    {:ok, %{port: port, socket_path: socket_path, socket_type: socket_type, socket: nil}}
+  end
+
+  defp get_socket_config do
+    case :os.type() do
+      {:win32, _} ->
+        # Windows named pipe
+        socket_path = "\\\\.\\pipe\\mpv-socket-#{:os.getpid()}"
+        {socket_path, :windows}
+
+      {:unix, _} ->
+        # Unix domain socket
+        socket_path = "/tmp/mpv-socket-#{:os.getpid()}"
+        {socket_path, :unix}
+    end
   end
 
   @impl true
-  def handle_info(:check_socket, state) do
+  def handle_info(:check_socket, %{socket_type: :unix} = state) do
     case File.exists?(state.socket_path) do
       true ->
         IO.puts("Socket created, connecting...")
@@ -58,6 +72,32 @@ defmodule TuneBox.Player do
         IO.puts("Waiting for socket...")
         Process.send_after(self(), :check_socket, 100)
         {:noreply, state}
+    end
+  end
+
+  @impl true
+  def handle_info(:check_socket, %{socket_type: :windows} = state) do
+    # On Windows, we connect to the named pipe
+    # This is a bit tricky - we might need to use a different approach
+    # Named pipes in Erlang/Elixir on Windows can be challenging
+    case connect_windows_pipe(state.socket_path) do
+      {:ok, socket} ->
+        IO.puts("Connected to named pipe")
+        {:noreply, %{state | socket: socket}}
+
+      {:error, _reason} ->
+        IO.puts("Waiting for named pipe...")
+        Process.send_after(self(), :check_socket, 100)
+        {:noreply, state}
+    end
+  end
+
+  defp connect_windows_pipe(pipe_path) do
+    # On Windows, try to open the named pipe as a file
+    # This is a simplified approach - for production you might want to use a NIF or port
+    case File.open(pipe_path, [:read, :write, :binary]) do
+      {:ok, file} -> {:ok, {:file, file}}
+      {:error, reason} -> {:error, reason}
     end
   end
 
@@ -97,7 +137,13 @@ defmodule TuneBox.Player do
     IO.puts("Socket not ready yet")
   end
 
+  defp send_to_mpv({:file, file}, json_string) do
+    # Windows named pipe
+    IO.write(file, json_string <> "\n")
+  end
+
   defp send_to_mpv(socket, json_string) do
+    # Unix socket
     :gen_tcp.send(socket, json_string <> "\n")
   end
 
@@ -128,7 +174,7 @@ defmodule TuneBox.Player do
   @impl true
   def handle_info({_port, {:exit_status, status}}, state) do
     IO.puts(">>> MPV EXITED with status: #{status}")
-    File.rm(state.socket_path)
+    cleanup_socket(state)
     {:noreply, state}
   end
 
@@ -140,7 +186,17 @@ defmodule TuneBox.Player do
 
   @impl true
   def terminate(_reason, state) do
-    File.rm(state.socket_path)
+    cleanup_socket(state)
     :ok
   end
+
+  defp cleanup_socket(%{socket: {:file, file}}) do
+    File.close(file)
+  end
+
+  defp cleanup_socket(%{socket_path: socket_path}) do
+    File.rm(socket_path)
+  end
+
+  defp cleanup_socket(_), do: :ok
 end
