@@ -58,6 +58,8 @@ defmodule Tunebox.MixProject do
       {:swoosh, "~> 1.16"},
       {:req, "~> 0.5"},
       {:telemetry_metrics, "~> 1.0"},
+      {:ecto_sql, "~> 3.10"},
+      {:ecto_sqlite3, "~> 0.13"},
       {:telemetry_poller, "~> 1.0"},
       {:gettext, "~> 0.26"},
       {:jason, "~> 1.4"},
