@@ -56,6 +56,13 @@ config :tunebox, TuneboxWeb.Endpoint,
 # Enable dev routes for dashboard and mailbox
 config :tunebox, dev_routes: true
 
+config :tunebox, TuneBox.Repo,
+  database: Path.expand("../tunebox.db", __DIR__),
+  pool_size: 5
+
+config :tunebox,
+  ecto_repos: [TuneBox.Repo]
+
 # Do not include metadata nor timestamps in development logs
 config :logger, :default_formatter, format: "[$level] $message\n"
 
