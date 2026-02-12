@@ -1,0 +1,32 @@
+# 1. Install dependencies (if you haven't already)
+mix deps.get
+
+# 2. Create the SQLite database file
+mix ecto.create
+
+# 3. Generate the migration files (if you're writing them from scratch
+#    rather than manually creating them as above)
+mix ecto.gen.migration create_artists
+mix ecto.gen.migration create_albums
+mix ecto.gen.migration create_tracks
+
+# 4. Run the migrations to create the tables
+mix ecto.migrate
+
+
+# Roll back the last migration
+mix ecto.rollback
+
+# Roll back all migrations
+mix ecto.rollback --all
+
+# Check migration status
+mix ecto.migrations
+
+# Drop the database and start fresh
+mix ecto.drop
+mix ecto.create
+mix ecto.migrate
+
+# Or reset in one go (drop + create + migrate)
+mix ecto.reset
