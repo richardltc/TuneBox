@@ -13,8 +13,8 @@ defmodule TuneBox.Music.Track do
     field(:bit_rate, :integer)
     field(:sample_rate, :integer)
 
-    belongs_to(:artist, Jukebox.Music.Artist)
-    belongs_to(:album, Jukebox.Music.Album)
+    belongs_to(:artist, TuneBox.Music.Artist)
+    belongs_to(:album, TuneBox.Music.Album)
 
     timestamps()
   end

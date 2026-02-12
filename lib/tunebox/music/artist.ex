@@ -5,8 +5,8 @@ defmodule TuneBox.Music.Artist do
   schema "artists" do
     field(:name, :string)
 
-    has_many(:albums, Jukebox.Music.Album)
-    has_many(:tracks, Jukebox.Music.Track)
+    has_many(:albums, TuneBox.Music.Album)
+    has_many(:tracks, TuneBox.Music.Track)
 
     timestamps()
   end
