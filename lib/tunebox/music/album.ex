@@ -7,8 +7,8 @@ defmodule TuneBox.Music.Album do
     field(:year, :integer)
     field(:genre, :string)
 
-    belongs_to(:artist, Jukebox.Music.Artist)
-    has_many(:tracks, Jukebox.Music.Track)
+    belongs_to(:artist, TuneBox.Music.Artist)
+    has_many(:tracks, TuneBox.Music.Track)
 
     timestamps()
   end
