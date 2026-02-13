@@ -17,7 +17,7 @@ defmodule TuneBox.Music.Importer do
 
   ## Example
 
-      Jukebox.Music.Importer.import("/home/user/Music")
+      TuneBox.Music.Importer.import("/home/user/Music")
   """
   def import(directory) do
     directory
