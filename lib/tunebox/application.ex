@@ -11,6 +11,7 @@ defmodule Tunebox.Application do
       TuneboxWeb.Telemetry,
       {DNSCluster, query: Application.get_env(:tunebox, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: Tunebox.PubSub},
+      TuneBox.Repo,
       # Start a worker by calling: Tunebox.Worker.start_link(arg)
       # {Tunebox.Worker, arg},
       # Start to serve requests, typically the last entry
