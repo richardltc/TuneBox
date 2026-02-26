@@ -5,6 +5,7 @@ defmodule TuneBox.Player do
   # --- Client API ---
   def start_link(opts \\ []), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   def play(file), do: GenServer.cast(__MODULE__, {:play, file})
+  def resume, do: GenServer.cast(__MODULE__, :resume)
   def pause, do: GenServer.cast(__MODULE__, :pause)
   def stop, do: GenServer.cast(__MODULE__, :stop)
   def rewind, do: GenServer.cast(__MODULE__, {:seek, -10})
@@ -66,6 +67,7 @@ defmodule TuneBox.Player do
         {:ok, socket} =
           :gen_tcp.connect({:local, state.socket_path}, 0, [:binary, packet: :line, active: true])
 
+        observe_properties(socket)
         {:noreply, %{state | socket: socket}}
 
       false ->
@@ -103,7 +105,17 @@ defmodule TuneBox.Player do
 
   @impl true
   def handle_cast({:play, file}, state) do
-    command = %{command: ["loadfile", file]} |> Jason.encode!()
+    load = %{command: ["loadfile", file]} |> Jason.encode!()
+    unpause = %{command: ["set_property", "pause", false]} |> Jason.encode!()
+    IO.puts("Sending command: #{load}")
+    send_to_mpv(state.socket, load)
+    send_to_mpv(state.socket, unpause)
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_cast(:resume, state) do
+    command = %{command: ["set_property", "pause", false]} |> Jason.encode!()
     IO.puts("Sending command: #{command}")
     send_to_mpv(state.socket, command)
     {:noreply, state}
@@ -111,7 +123,7 @@ defmodule TuneBox.Player do
 
   @impl true
   def handle_cast(:pause, state) do
-    command = %{command: ["cycle", "pause"]} |> Jason.encode!()
+    command = %{command: ["set_property", "pause", true]} |> Jason.encode!()
     IO.puts("Sending command: #{command}")
     send_to_mpv(state.socket, command)
     {:noreply, state}
@@ -133,6 +145,13 @@ defmodule TuneBox.Player do
     {:noreply, state}
   end
 
+  defp observe_properties(socket) do
+    for {id, prop} <- [{1, "time-pos"}, {2, "duration"}] do
+      cmd = %{command: ["observe_property", id, prop]} |> Jason.encode!()
+      send_to_mpv(socket, cmd)
+    end
+  end
+
   defp send_to_mpv(nil, _json_string) do
     IO.puts("Socket not ready yet")
   end
@@ -149,7 +168,19 @@ defmodule TuneBox.Player do
 
   @impl true
   def handle_info({:tcp, _socket, data}, state) do
-    IO.puts(">>> MPV Response: #{data}")
+    case Jason.decode(data) do
+      {:ok, %{"event" => "property-change", "name" => "time-pos", "data" => pos}}
+          when is_number(pos) ->
+        Phoenix.PubSub.broadcast(Tunebox.PubSub, "player:status", {:time_pos, pos})
+
+      {:ok, %{"event" => "property-change", "name" => "duration", "data" => dur}}
+          when is_number(dur) ->
+        Phoenix.PubSub.broadcast(Tunebox.PubSub, "player:status", {:duration, dur})
+
+      _ ->
+        :ok
+    end
+
     {:noreply, state}
   end
 
