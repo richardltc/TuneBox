@@ -1,6 +1,6 @@
 defmodule Tunebox.Application do
   # See https://hexdocs.pm/elixir/Application.html
-  # for more information on OTP Applications.
+  # for more information on OTP Applications..
   @moduledoc false
 
   use Application
@@ -10,21 +10,26 @@ defmodule Tunebox.Application do
   @impl true
   def start(_type, _args) do
     with :ok <- check_dependencies() do
-      children = [
-        TuneboxWeb.Telemetry,
-        {DNSCluster, query: Application.get_env(:tunebox, :dns_cluster_query) || :ignore},
-        {Phoenix.PubSub, name: Tunebox.PubSub},
-        TuneBox.Repo,
-        # Start a worker by calling: Tunebox.Worker.start_link(arg)
-        # {Tunebox.Worker, arg},
-        # Start to serve requests, typically the last entry
-        TuneboxWeb.Endpoint
-      ]
+      children =
+        [
+          TuneboxWeb.Telemetry,
+          {DNSCluster, query: Application.get_env(:tunebox, :dns_cluster_query) || :ignore},
+          {Phoenix.PubSub, name: Tunebox.PubSub},
+          TuneBox.Repo,
+          TuneboxWeb.Endpoint
+        ] ++ player_children()
 
-      # See https://hexdocs.pm/elixir/Supervisor.html
-      # for other strategies and supported options
       opts = [strategy: :one_for_one, name: Tunebox.Supervisor]
       Supervisor.start_link(children, opts)
+    end
+  end
+
+  defp player_children do
+    if System.find_executable("mpv") do
+      [TuneBox.Player]
+    else
+      Logger.warning("mpv not found — playback will be disabled.")
+      []
     end
   end
 

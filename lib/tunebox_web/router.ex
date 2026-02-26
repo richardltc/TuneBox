@@ -17,7 +17,7 @@ defmodule TuneboxWeb.Router do
   scope "/", TuneboxWeb do
     pipe_through :browser
 
-    get "/", PageController, :home
+    live "/", PlayerLive
   end
 
   # Other scopes may use custom stacks.
