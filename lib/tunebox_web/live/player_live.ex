@@ -347,6 +347,14 @@ defmodule TuneboxWeb.PlayerLive do
     {:noreply, socket}
   end
 
+  def handle_info(:track_ended, socket) do
+    if socket.assigns.playback_state == :playing do
+      {:noreply, select_adjacent_track(socket, 1)}
+    else
+      {:noreply, socket}
+    end
+  end
+
   def handle_info({:time_pos, pos}, socket) do
     {:noreply, assign(socket, :time_pos, pos)}
   end
