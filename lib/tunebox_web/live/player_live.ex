@@ -1,6 +1,7 @@
 defmodule TuneboxWeb.PlayerLive do
   use TuneboxWeb, :live_view
 
+  alias TuneBox.Config
   alias TuneBox.Music
   alias TuneBox.Music.Importer
   alias TuneBox.Player
@@ -8,24 +9,37 @@ defmodule TuneboxWeb.PlayerLive do
   def mount(_params, _session, socket) do
     live_tracks = Music.list_live_tracks()
     tracks = Enum.map(live_tracks, & &1.track)
+    track_map = Map.new(tracks, &{&1.id, &1})
 
     if connected?(socket), do: Phoenix.PubSub.subscribe(Tunebox.PubSub, "player:status")
+
+    {restored_track, restored_time, restored_duration} =
+      case Config.get_paused_state() do
+        {track_id, time_pos, duration} ->
+          case Map.get(track_map, track_id) do
+            nil -> {nil, 0.0, 0.0}
+            track -> {track, time_pos, duration}
+          end
+
+        nil ->
+          {nil, 0.0, 0.0}
+      end
 
     socket =
       socket
       |> stream(:tracks, tracks)
       |> assign(:track_list, tracks)
-      |> assign(:track_map, Map.new(tracks, &{&1.id, &1}))
-      |> assign(:selected_track, nil)
+      |> assign(:track_map, track_map)
+      |> assign(:selected_track, restored_track)
       |> assign(:playing_track, nil)
-      |> assign(:playback_state, :stopped)
+      |> assign(:playback_state, if(restored_track, do: :paused, else: :stopped))
       |> assign(:player_available, Process.whereis(TuneBox.Player) != nil)
-      |> assign(:time_pos, 0.0)
-      |> assign(:duration, 0.0)
+      |> assign(:time_pos, restored_time)
+      |> assign(:duration, restored_duration)
       |> assign(:importing, false)
       |> assign(:import_error, nil)
       |> assign(:total_tracks, Music.count_tracks())
-      |> assign(:music_library_path, TuneBox.Config.music_library_path() || "")
+      |> assign(:music_library_path, Config.music_library_path() || "")
       |> assign(:search_query, "")
       |> assign(:search_results, [])
       |> assign(:show_settings, false)
@@ -36,7 +50,7 @@ defmodule TuneboxWeb.PlayerLive do
       |> assign(:track_form, nil)
       |> assign(:all_artists, [])
       |> assign(:all_albums, [])
-      |> assign(:max_visible_tracks, TuneBox.Config.max_visible_tracks())
+      |> assign(:max_visible_tracks, Config.max_visible_tracks())
 
     {:ok, socket}
   end
@@ -103,7 +117,7 @@ defmodule TuneboxWeb.PlayerLive do
         {:noreply, assign(socket, :import_error, "Folder doesn't exist.")}
 
       true ->
-        TuneBox.Config.set_music_library_path(path)
+        Config.set_music_library_path(path)
         parent = self()
 
         Task.start(fn ->
@@ -139,8 +153,15 @@ defmodule TuneboxWeb.PlayerLive do
     if assigns.playback_state == :paused and same_track do
       Player.resume()
     else
-      Player.play(assigns.selected_track.file_path)
+      # Resume from saved position if restoring a persisted paused state
+      if assigns.time_pos > 0 and is_nil(assigns.playing_track) do
+        Player.play_from(assigns.selected_track.file_path, assigns.time_pos)
+      else
+        Player.play(assigns.selected_track.file_path)
+      end
     end
+
+    Config.clear_paused_state()
 
     {:noreply,
      socket
@@ -152,6 +173,10 @@ defmodule TuneboxWeb.PlayerLive do
   def handle_event("pause", _params, socket) do
     Player.pause()
 
+    if socket.assigns.playing_track do
+      Config.set_paused_state(socket.assigns.playing_track.id, socket.assigns.time_pos, socket.assigns.duration)
+    end
+
     {:noreply,
      socket
      |> assign(:playback_state, :paused)
@@ -160,6 +185,7 @@ defmodule TuneboxWeb.PlayerLive do
 
   def handle_event("stop", _params, socket) do
     Player.stop()
+    Config.clear_paused_state()
 
     {:noreply,
      socket
@@ -329,7 +355,7 @@ defmodule TuneboxWeb.PlayerLive do
 
   def handle_event("set_max_tracks", %{"max" => max}, socket) do
     max = max |> String.to_integer() |> max(3) |> min(100)
-    TuneBox.Config.set_max_visible_tracks(max)
+    Config.set_max_visible_tracks(max)
     {:noreply, assign(socket, :max_visible_tracks, max)}
   end
 
