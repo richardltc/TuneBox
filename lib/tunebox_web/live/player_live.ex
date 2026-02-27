@@ -225,7 +225,14 @@ defmodule TuneboxWeb.PlayerLive do
 
     socket =
       if selected && selected.id == track_id do
-        reload_tracks(socket, live_tracks, reset_selection: true)
+        Config.clear_paused_state()
+
+        socket
+        |> assign(:playback_state, :stopped)
+        |> assign(:playing_track, nil)
+        |> assign(:time_pos, 0.0)
+        |> assign(:duration, 0.0)
+        |> reload_tracks(live_tracks, reset_selection: true)
       else
         reload_tracks(socket, live_tracks)
       end
