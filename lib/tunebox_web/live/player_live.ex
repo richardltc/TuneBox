@@ -36,6 +36,7 @@ defmodule TuneboxWeb.PlayerLive do
       |> assign(:track_form, nil)
       |> assign(:all_artists, [])
       |> assign(:all_albums, [])
+      |> assign(:max_visible_tracks, TuneBox.Config.max_visible_tracks())
 
     {:ok, socket}
   end
@@ -175,6 +176,12 @@ defmodule TuneboxWeb.PlayerLive do
   def handle_event("fast_forward", _params, socket) do
     Player.fast_forward()
     {:noreply, socket}
+  end
+
+  def handle_event("add_random", _params, socket) do
+    live_tracks = Music.add_random_live_tracks()
+
+    {:noreply, reload_tracks(socket, live_tracks)}
   end
 
   def handle_event("shuffle", _params, socket) do
@@ -318,6 +325,12 @@ defmodule TuneboxWeb.PlayerLive do
       {:error, changeset} ->
         {:noreply, assign(socket, :track_form, to_form(changeset))}
     end
+  end
+
+  def handle_event("set_max_tracks", %{"max" => max}, socket) do
+    max = max |> String.to_integer() |> max(3) |> min(100)
+    TuneBox.Config.set_max_visible_tracks(max)
+    {:noreply, assign(socket, :max_visible_tracks, max)}
   end
 
   def handle_event("delete_artist", %{"id" => id}, socket) do
@@ -525,11 +538,27 @@ defmodule TuneboxWeb.PlayerLive do
           <div class="card-body p-4">
             <div class="flex items-center justify-between mb-1">
               <h2 class="card-title text-base">Live Tracks</h2>
-              <button class="btn btn-ghost btn-xs" title="Shuffle" phx-click="shuffle">
-                <.icon name="hero-arrow-path" class="w-4 h-4" />
-              </button>
+              <div class="flex items-center gap-0.5">
+                <button class="btn btn-ghost btn-xs" title="Add 10 random tracks" phx-click="add_random">
+                  <.icon name="hero-plus" class="w-4 h-4" />
+                </button>
+                <button class="btn btn-ghost btn-xs" title="Shuffle" phx-click="shuffle">
+                  <.icon name="hero-arrow-path" class="w-4 h-4" />
+                </button>
+                <form phx-change="set_max_tracks" class="flex items-center ml-1">
+                  <input
+                    type="number"
+                    name="max"
+                    value={@max_visible_tracks}
+                    min="3"
+                    max="100"
+                    title="Max visible tracks"
+                    class="input input-bordered input-xs w-14 text-center"
+                  />
+                </form>
+              </div>
             </div>
-            <ul id="tracks" phx-update="stream" class="space-y-0.5">
+            <ul id="tracks" phx-update="stream" class="space-y-0.5 overflow-y-auto" style={"max-height: #{@max_visible_tracks * 2.5}rem"}>
               <li
                 :for={{dom_id, track} <- @streams.tracks}
                 id={dom_id}

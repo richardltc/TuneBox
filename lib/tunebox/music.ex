@@ -83,6 +83,43 @@ defmodule TuneBox.Music do
   end
 
   @doc """
+  Appends `count` random tracks (not already in the live list) to the end.
+  Returns the updated list of live tracks.
+  """
+  def add_random_live_tracks(count \\ 10) do
+    existing_ids =
+      LiveTrack
+      |> select([lt], lt.track_id)
+      |> Repo.all()
+
+    track_ids =
+      Track
+      |> where([t], t.id not in ^existing_ids)
+      |> select([t], t.id)
+      |> order_by(fragment("RANDOM()"))
+      |> limit(^count)
+      |> Repo.all()
+
+    max_position =
+      LiveTrack
+      |> select([lt], max(lt.position))
+      |> Repo.one() || 0
+
+    now = NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
+
+    entries =
+      track_ids
+      |> Enum.with_index(max_position + 1)
+      |> Enum.map(fn {track_id, position} ->
+        %{track_id: track_id, position: position, inserted_at: now, updated_at: now}
+      end)
+
+    if entries != [], do: Repo.insert_all(LiveTrack, entries)
+
+    list_live_tracks()
+  end
+
+  @doc """
   Searches tracks by title or artist name. Returns up to 10 results.
   """
   def search_tracks(query) when is_binary(query) and query != "" do
