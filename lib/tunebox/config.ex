@@ -4,13 +4,14 @@ defmodule TuneBox.Config do
 
   schema "config" do
     field(:music_library_path, :string)
+    field(:max_visible_tracks, :integer, default: 10)
 
     timestamps()
   end
 
   def changeset(config, attrs) do
     config
-    |> cast(attrs, [:music_library_path])
+    |> cast(attrs, [:music_library_path, :max_visible_tracks])
   end
 
   @doc """
@@ -36,6 +37,24 @@ defmodule TuneBox.Config do
   def set_music_library_path(path) do
     get()
     |> changeset(%{music_library_path: path})
+    |> TuneBox.Repo.update!()
+  end
+
+  @doc """
+  Returns the stored max visible tracks setting.
+  """
+  def max_visible_tracks do
+    get().max_visible_tracks || 10
+  end
+
+  @doc """
+  Sets the max visible tracks value (clamped to 3–100).
+  """
+  def set_max_visible_tracks(value) do
+    value = value |> max(3) |> min(100)
+
+    get()
+    |> changeset(%{max_visible_tracks: value})
     |> TuneBox.Repo.update!()
   end
 end
