@@ -177,6 +177,9 @@ defmodule TuneBox.Player do
           when is_number(dur) ->
         Phoenix.PubSub.broadcast(Tunebox.PubSub, "player:status", {:duration, dur})
 
+      {:ok, %{"event" => "end-file", "reason" => "eof"}} ->
+        Phoenix.PubSub.broadcast(Tunebox.PubSub, "player:status", :track_ended)
+
       _ ->
         :ok
     end
