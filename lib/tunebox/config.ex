@@ -5,13 +5,17 @@ defmodule TuneBox.Config do
   schema "config" do
     field(:music_library_path, :string)
     field(:max_visible_tracks, :integer, default: 10)
+    field(:paused_time_pos, :float, default: 0.0)
+    field(:paused_duration, :float, default: 0.0)
+
+    belongs_to :paused_track, TuneBox.Music.Track
 
     timestamps()
   end
 
   def changeset(config, attrs) do
     config
-    |> cast(attrs, [:music_library_path, :max_visible_tracks])
+    |> cast(attrs, [:music_library_path, :max_visible_tracks, :paused_track_id, :paused_time_pos, :paused_duration])
   end
 
   @doc """
@@ -56,5 +60,40 @@ defmodule TuneBox.Config do
     get()
     |> changeset(%{max_visible_tracks: value})
     |> TuneBox.Repo.update!()
+  end
+
+  @doc """
+  Saves the paused track ID and time position.
+  """
+  def set_paused_state(track_id, time_pos, duration) do
+    get()
+    |> changeset(%{
+      paused_track_id: track_id,
+      paused_time_pos: time_pos || 0.0,
+      paused_duration: duration || 0.0
+    })
+    |> TuneBox.Repo.update!()
+  end
+
+  @doc """
+  Clears the paused state (sets track to nil, time/duration to 0.0).
+  """
+  def clear_paused_state do
+    get()
+    |> changeset(%{paused_track_id: nil, paused_time_pos: 0.0, paused_duration: 0.0})
+    |> TuneBox.Repo.update!()
+  end
+
+  @doc """
+  Returns `{track_id, time_pos, duration}` if a paused track is saved, or `nil`.
+  """
+  def get_paused_state do
+    config = get()
+
+    if config.paused_track_id do
+      {config.paused_track_id, config.paused_time_pos || 0.0, config.paused_duration || 0.0}
+    else
+      nil
+    end
   end
 end

@@ -5,11 +5,13 @@ defmodule TuneBox.Player do
   # --- Client API ---
   def start_link(opts \\ []), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   def play(file), do: GenServer.cast(__MODULE__, {:play, file})
+  def play_from(file, seconds), do: GenServer.cast(__MODULE__, {:play_from, file, seconds})
   def resume, do: GenServer.cast(__MODULE__, :resume)
   def pause, do: GenServer.cast(__MODULE__, :pause)
   def stop, do: GenServer.cast(__MODULE__, :stop)
   def rewind, do: GenServer.cast(__MODULE__, {:seek, -10})
   def fast_forward, do: GenServer.cast(__MODULE__, {:seek, 10})
+  def seek_absolute(seconds), do: GenServer.cast(__MODULE__, {:seek_absolute, seconds})
 
   # --- Server Callbacks ---
   @impl true
@@ -114,6 +116,17 @@ defmodule TuneBox.Player do
   end
 
   @impl true
+  def handle_cast({:play_from, file, seconds}, state) do
+    # Use mpv's loadfile "start" option to begin at a specific position
+    load = %{command: ["loadfile", file, "replace", "start=#{seconds}"]} |> Jason.encode!()
+    unpause = %{command: ["set_property", "pause", false]} |> Jason.encode!()
+    IO.puts("Sending command: #{load}")
+    send_to_mpv(state.socket, load)
+    send_to_mpv(state.socket, unpause)
+    {:noreply, state}
+  end
+
+  @impl true
   def handle_cast(:resume, state) do
     command = %{command: ["set_property", "pause", false]} |> Jason.encode!()
     IO.puts("Sending command: #{command}")
@@ -140,6 +153,14 @@ defmodule TuneBox.Player do
   @impl true
   def handle_cast({:seek, seconds}, state) do
     command = %{command: ["seek", seconds]} |> Jason.encode!()
+    IO.puts("Sending command: #{command}")
+    send_to_mpv(state.socket, command)
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_cast({:seek_absolute, seconds}, state) do
+    command = %{command: ["seek", seconds, "absolute"]} |> Jason.encode!()
     IO.puts("Sending command: #{command}")
     send_to_mpv(state.socket, command)
     {:noreply, state}
