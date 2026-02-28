@@ -2,7 +2,7 @@
 defmodule TuneBox.Music.Importer do
   @moduledoc """
   Walks a directory tree and imports all supported audio files
-  into the database, extracting metadata via ffprobe.
+  into the database, extracting metadata via mpv.
   """
 
   alias TuneBox.Repo
@@ -83,65 +83,95 @@ defmodule TuneBox.Music.Importer do
   end
 
   @doc """
-  Extracts audio metadata using ffprobe.
-  Requires ffmpeg/ffprobe to be installed on the system.
+  Extracts audio metadata using mpv.
+  Requires mpv to be installed on the system.
   """
   def extract_metadata(file_path) do
     args = [
-      "-v",
-      "quiet",
-      "-print_format",
-      "json",
-      "-show_format",
-      "-show_streams",
+      "--msg-level=identify=info",
+      "--end=0.01",
+      "--term-playing-msg=DURATION=${=duration}",
+      "--no-audio-display",
       file_path
     ]
 
-    case System.cmd("ffprobe", args, stderr_to_stdout: true) do
-      {output, 0} ->
-        parse_ffprobe_output(output, file_path)
-
-      {error, _code} ->
-        {:error, "ffprobe failed: #{error}"}
+    case System.cmd("mpv", args, stderr_to_stdout: true) do
+      {output, _code} ->
+        parse_mpv_output(output, file_path)
     end
   end
 
-  defp parse_ffprobe_output(json_string, file_path) do
-    case Jason.decode(json_string) do
-      {:ok, data} ->
-        format = Map.get(data, "format", %{})
-        tags = format |> Map.get("tags", %{}) |> normalise_tag_keys()
-        streams = Map.get(data, "streams", [])
-        audio_stream = Enum.find(streams, &(&1["codec_type"] == "audio")) || %{}
+  defp parse_mpv_output(output, file_path) do
+    lines = String.split(output, "\n")
+    tags = parse_file_tags(lines)
 
-        metadata = %{
-          title: Map.get(tags, "title") || filename_as_title(file_path),
-          artist: Map.get(tags, "artist") || Map.get(tags, "album_artist"),
-          album_artist: Map.get(tags, "album_artist"),
-          album: Map.get(tags, "album"),
-          track_number: parse_track_number(Map.get(tags, "track")),
-          disc_number: parse_track_number(Map.get(tags, "disc")) || 1,
-          genre: Map.get(tags, "genre"),
-          year: parse_year(Map.get(tags, "date") || Map.get(tags, "year")),
-          duration_seconds: parse_duration(Map.get(format, "duration")),
-          file_format: Path.extname(file_path) |> String.trim_leading(".") |> String.downcase(),
-          file_size: parse_int(Map.get(format, "size")),
-          bit_rate: parse_int(Map.get(format, "bit_rate") || Map.get(audio_stream, "bit_rate")),
-          sample_rate: parse_int(Map.get(audio_stream, "sample_rate"))
-        }
+    metadata = %{
+      title: Map.get(tags, "title") || filename_as_title(file_path),
+      artist: Map.get(tags, "artist") || Map.get(tags, "album_artist"),
+      album_artist: Map.get(tags, "album_artist"),
+      album: Map.get(tags, "album"),
+      track_number: parse_track_number(Map.get(tags, "track")),
+      disc_number: parse_track_number(Map.get(tags, "disc") || Map.get(tags, "discnumber")) || 1,
+      genre: Map.get(tags, "genre"),
+      year: parse_year(Map.get(tags, "date") || Map.get(tags, "year")),
+      duration_seconds: parse_duration_line(lines),
+      file_format: Path.extname(file_path) |> String.trim_leading(".") |> String.downcase(),
+      file_size: file_size(file_path),
+      bit_rate: nil,
+      sample_rate: parse_sample_rate(lines)
+    }
 
-        {:ok, metadata}
-
-      {:error, _} ->
-        {:error, "Failed to parse ffprobe JSON output"}
-    end
+    {:ok, metadata}
   end
 
-  # ffprobe tag keys can vary in case (TITLE vs title vs Title)
-  defp normalise_tag_keys(tags) do
-    Map.new(tags, fn {key, value} ->
-      {String.downcase(key), value}
+  # Parses the "File tags:" block — keys are lowercased and underscores preserved.
+  # mpv outputs tags indented with a leading space, e.g. " Artist: Dire Straits"
+  defp parse_file_tags(lines) do
+    lines
+    |> Enum.drop_while(&(&1 != "File tags:"))
+    |> Enum.drop(1)
+    |> Enum.take_while(&String.starts_with?(&1, " "))
+    |> Enum.reduce(%{}, fn line, acc ->
+      case String.split(String.trim(line), ": ", parts: 2) do
+        [key, value] -> Map.put(acc, key |> String.downcase() |> String.replace(" ", "_"), value)
+        _ -> acc
+      end
     end)
+  end
+
+  # Parses sample rate from the audio track line, e.g. "(+) Audio --aid=1 'Title' (opus 2ch 48000Hz)"
+  defp parse_sample_rate(lines) do
+    audio_line = Enum.find(lines, &String.contains?(&1, "(+) Audio"))
+
+    case audio_line && Regex.run(~r/(\d+)Hz/, audio_line) do
+      [_, rate] -> String.to_integer(rate)
+      _ -> nil
+    end
+  end
+
+  # Parses the DURATION=<float> line emitted by --term-playing-msg
+  defp parse_duration_line(lines) do
+    duration_line = Enum.find(lines, &String.starts_with?(&1, "DURATION="))
+
+    case duration_line do
+      nil ->
+        nil
+
+      line ->
+        value = line |> String.replace_prefix("DURATION=", "") |> String.trim()
+
+        case Float.parse(value) do
+          {seconds, _} -> round(seconds)
+          :error -> nil
+        end
+    end
+  end
+
+  defp file_size(file_path) do
+    case File.stat(file_path) do
+      {:ok, %{size: size}} -> size
+      _ -> nil
+    end
   end
 
   defp filename_as_title(file_path) do
@@ -173,26 +203,6 @@ defmodule TuneBox.Music.Importer do
       _ -> nil
     end
   end
-
-  defp parse_duration(nil), do: nil
-
-  defp parse_duration(value) when is_binary(value) do
-    case Float.parse(value) do
-      {seconds, _} -> round(seconds)
-      :error -> nil
-    end
-  end
-
-  defp parse_int(nil), do: nil
-
-  defp parse_int(value) when is_binary(value) do
-    case Integer.parse(value) do
-      {int, _} -> int
-      :error -> nil
-    end
-  end
-
-  defp parse_int(value) when is_integer(value), do: value
 
   # --- Database upsert logic ---
 
