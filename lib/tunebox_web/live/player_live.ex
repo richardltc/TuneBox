@@ -38,6 +38,7 @@ defmodule TuneboxWeb.PlayerLive do
       |> assign(:duration, restored_duration)
       |> assign(:importing, false)
       |> assign(:import_error, nil)
+      |> assign(:import_current_folder, nil)
       |> assign(:total_tracks, Music.count_tracks())
       |> assign(:music_library_path, Config.music_library_path() || "")
       |> assign(:search_query, "")
@@ -122,7 +123,7 @@ defmodule TuneboxWeb.PlayerLive do
 
         Task.start(fn ->
           try do
-            Importer.import(path)
+            Importer.import(path, fn folder -> send(parent, {:import_progress, folder}) end)
             send(parent, :import_done)
           rescue
             e -> send(parent, {:import_error, Exception.message(e)})
@@ -387,10 +388,15 @@ defmodule TuneboxWeb.PlayerLive do
     socket =
       socket
       |> assign(:importing, false)
+      |> assign(:import_current_folder, nil)
       |> assign(:total_tracks, Music.count_tracks())
       |> put_flash(:info, "Library imported")
 
     {:noreply, socket}
+  end
+
+  def handle_info({:import_progress, folder}, socket) do
+    {:noreply, assign(socket, :import_current_folder, folder)}
   end
 
   def handle_info(:track_ended, socket) do
@@ -410,7 +416,11 @@ defmodule TuneboxWeb.PlayerLive do
   end
 
   def handle_info({:import_error, message}, socket) do
-    {:noreply, socket |> assign(:importing, false) |> assign(:import_error, message)}
+    {:noreply,
+     socket
+     |> assign(:importing, false)
+     |> assign(:import_current_folder, nil)
+     |> assign(:import_error, message)}
   end
 
   defp reload_tracks(socket, live_tracks, opts \\ []) do
@@ -752,7 +762,7 @@ defmodule TuneboxWeb.PlayerLive do
               </div>
 
               <%!-- Import --%>
-              <div class="flex-shrink-0">
+              <div class="flex-shrink-0 flex flex-col gap-1">
                 <p class="text-xs font-semibold uppercase tracking-wide opacity-50 mb-1">Music Library</p>
                 <form phx-submit="import" class="flex gap-2 items-start">
                   <div class="flex flex-col gap-1">
@@ -771,6 +781,7 @@ defmodule TuneboxWeb.PlayerLive do
                     {if @importing, do: "Importing…", else: "Import"}
                   </button>
                 </form>
+                <p :if={@importing && @import_current_folder} class="text-xs opacity-50 truncate" title={@import_current_folder}>{@import_current_folder}</p>
               </div>
 
             </div>
