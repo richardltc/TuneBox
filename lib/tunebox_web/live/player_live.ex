@@ -636,7 +636,9 @@ defmodule TuneboxWeb.PlayerLive do
                 />
                 <div class="min-w-0 flex-1">
                   <div class="truncate text-sm font-medium">{track.title}</div>
-                  <div class="truncate text-xs opacity-60">{track.artist.name}</div>
+                  <div class="truncate text-xs opacity-60">
+                    {track.artist.name}{if track.album, do: " - #{track.album.title}"}
+                  </div>
                 </div>
                 <div class={[
                   "flex items-center gap-0.5 flex-shrink-0 transition-opacity",
