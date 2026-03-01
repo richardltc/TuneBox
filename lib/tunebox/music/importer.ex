@@ -74,17 +74,24 @@ defmodule TuneBox.Music.Importer do
 
   @doc """
   Imports a single file, extracting metadata and upserting into the database.
+  Skips extraction entirely if the track already exists.
   """
   def import_file(file_path) do
-    Logger.info("Importing: #{file_path}")
+    normalised_path = file_path |> Path.expand() |> String.replace("\\", "/")
 
-    case extract_metadata(file_path) do
-      {:ok, metadata} ->
-        upsert_track(file_path, metadata)
+    if Repo.get_by(Track, file_path: normalised_path) do
+      Logger.debug("Skipping (already imported): #{file_path}")
+    else
+      Logger.info("Importing: #{file_path}")
 
-      {:error, reason} ->
-        Logger.warning("Failed to extract metadata from #{file_path}: #{inspect(reason)}")
-        {:error, reason}
+      case extract_metadata(file_path) do
+        {:ok, metadata} ->
+          upsert_track(file_path, metadata)
+
+        {:error, reason} ->
+          Logger.warning("Failed to extract metadata from #{file_path}: #{inspect(reason)}")
+          {:error, reason}
+      end
     end
   end
 
