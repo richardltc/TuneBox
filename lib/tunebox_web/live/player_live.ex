@@ -630,7 +630,7 @@ defmodule TuneboxWeb.PlayerLive do
                   <img
                     src={"data:image/jpeg;base64,#{Base.encode64(track.album.cover_big)}"}
                     class={[
-                      "w-8 h-8 rounded object-cover flex-shrink-0",
+                      "w-12 h-12 rounded object-cover flex-shrink-0",
                       if(@playback_state == :playing && @playing_track && @playing_track.id == track.id,
                         do: "animate-bounce"
                       )
