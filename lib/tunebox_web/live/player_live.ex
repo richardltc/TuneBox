@@ -83,6 +83,7 @@ defmodule TuneboxWeb.PlayerLive do
         end
 
       parent = self()
+
       Task.start(fn ->
         ArtworkFetcher.fetch_for_track(new_track)
         send(parent, :reload_tracks)
@@ -146,7 +147,8 @@ defmodule TuneboxWeb.PlayerLive do
 
   def handle_event(event, _params, %{assigns: %{player_available: false}} = socket)
       when event in ~w(play pause stop rewind fast_forward) do
-    {:noreply, put_flash(socket, :error, "mpv is not installed. Install it with: sudo apt install mpv")}
+    {:noreply,
+     put_flash(socket, :error, "mpv is not installed. Install it with: sudo apt install mpv")}
   end
 
   def handle_event("play", _params, %{assigns: %{selected_track: nil}} = socket) do
@@ -181,7 +183,11 @@ defmodule TuneboxWeb.PlayerLive do
     Player.pause()
 
     if socket.assigns.playing_track do
-      Config.set_paused_state(socket.assigns.playing_track.id, socket.assigns.time_pos, socket.assigns.duration)
+      Config.set_paused_state(
+        socket.assigns.playing_track.id,
+        socket.assigns.time_pos,
+        socket.assigns.duration
+      )
     end
 
     {:noreply,
@@ -505,7 +511,9 @@ defmodule TuneboxWeb.PlayerLive do
             <.icon name="hero-cog-6-tooth" class="w-5 h-5" />
           </button>
         </div>
-        <p class="mt-2 text-base-content/60">Your personal music library, containing {@total_tracks} tracks</p>
+        <p class="mt-2 text-base-content/60">
+          Your personal music library, containing {@total_tracks} tracks
+        </p>
         <div class="relative mt-3 max-w-md mx-auto">
           <form phx-change="search" phx-submit="search">
             <input
@@ -518,7 +526,10 @@ defmodule TuneboxWeb.PlayerLive do
               phx-debounce="300"
             />
           </form>
-          <ul :if={@search_results != []} class="absolute z-10 w-full mt-1 bg-base-200 rounded-lg shadow-lg max-h-80 overflow-y-auto">
+          <ul
+            :if={@search_results != []}
+            class="absolute z-10 w-full mt-1 bg-base-200 rounded-lg shadow-lg max-h-80 overflow-y-auto"
+          >
             <li
               :for={track <- @search_results}
               class="flex items-center justify-between gap-2 px-3 py-2 hover:bg-base-300 transition-colors"
@@ -545,12 +556,21 @@ defmodule TuneboxWeb.PlayerLive do
           <h2 class="card-title text-base mb-2">Manage Artists</h2>
           <.form for={@artist_form} phx-submit="save_artist" class="flex gap-2 items-start mb-3">
             <div class="flex-1">
-              <.input field={@artist_form[:name]} placeholder="Artist name" class="input input-bordered input-sm w-full" />
+              <.input
+                field={@artist_form[:name]}
+                placeholder="Artist name"
+                class="input input-bordered input-sm w-full"
+              />
             </div>
             <button type="submit" class="btn btn-primary btn-sm">
               {if @editing_artist, do: "Update", else: "Add"}
             </button>
-            <button :if={@editing_artist} type="button" class="btn btn-ghost btn-sm" phx-click="cancel_edit">
+            <button
+              :if={@editing_artist}
+              type="button"
+              class="btn btn-ghost btn-sm"
+              phx-click="cancel_edit"
+            >
               Cancel
             </button>
           </.form>
@@ -592,7 +612,11 @@ defmodule TuneboxWeb.PlayerLive do
             <div class="flex items-center justify-between mb-1">
               <h2 class="card-title text-base">Live Tracks</h2>
               <div class="flex items-center gap-0.5">
-                <button class="btn btn-ghost btn-xs" title="Add 10 random tracks" phx-click="add_random">
+                <button
+                  class="btn btn-ghost btn-xs"
+                  title="Add 10 random tracks"
+                  phx-click="add_random"
+                >
                   <.icon name="hero-plus" class="w-4 h-4" />
                 </button>
                 <button class="btn btn-ghost btn-xs" title="Shuffle" phx-click="shuffle">
@@ -611,7 +635,12 @@ defmodule TuneboxWeb.PlayerLive do
                 </form>
               </div>
             </div>
-            <ul id="tracks" phx-update="stream" class="space-y-0.5 overflow-y-auto" style={"max-height: #{@max_visible_tracks * 2.5}rem"}>
+            <ul
+              id="tracks"
+              phx-update="stream"
+              class="space-y-0.5 overflow-y-auto"
+              style={"max-height: #{@max_visible_tracks * 2.5}rem"}
+            >
               <li
                 :for={{dom_id, track} <- @streams.tracks}
                 id={dom_id}
@@ -629,12 +658,7 @@ defmodule TuneboxWeb.PlayerLive do
                 <%= if track.album && track.album.cover_big do %>
                   <img
                     src={"data:image/jpeg;base64,#{Base.encode64(track.album.cover_big)}"}
-                    class={[
-                      "w-12 h-12 rounded object-cover flex-shrink-0",
-                      if(@playback_state == :playing && @playing_track && @playing_track.id == track.id,
-                        do: "animate-bounce"
-                      )
-                    ]}
+                    class="w-12 h-12 rounded object-cover flex-shrink-0"
                   />
                 <% else %>
                   <.icon
@@ -648,8 +672,10 @@ defmodule TuneboxWeb.PlayerLive do
                       cond do
                         @playback_state == :playing && @playing_track && @playing_track.id == track.id ->
                           "animate-bounce text-white"
+
                         @selected_track && @selected_track.id == track.id ->
                           "text-white"
+
                         true ->
                           "opacity-60"
                       end
@@ -705,12 +731,19 @@ defmodule TuneboxWeb.PlayerLive do
                     <.icon name="hero-trash" class="w-3.5 h-3.5" />
                   </button>
                 </div>
-                <div :if={@editing_track && @editing_track.id == track.id} class="mt-2 pt-2 border-t border-base-content/10">
+                <div
+                  :if={@editing_track && @editing_track.id == track.id}
+                  class="mt-2 pt-2 border-t border-base-content/10"
+                >
                   <.form for={@track_form} phx-submit="save_track" class="flex items-end gap-2">
                     <div class="flex-1">
                       <label class="label label-text text-xs">Artist</label>
                       <select name="track[artist_id]" class="select select-bordered select-sm w-full">
-                        <option :for={artist <- @all_artists} value={artist.id} selected={artist.id == @editing_track.artist_id}>
+                        <option
+                          :for={artist <- @all_artists}
+                          value={artist.id}
+                          selected={artist.id == @editing_track.artist_id}
+                        >
                           {artist.name}
                         </option>
                       </select>
@@ -719,13 +752,19 @@ defmodule TuneboxWeb.PlayerLive do
                       <label class="label label-text text-xs">Album</label>
                       <select name="track[album_id]" class="select select-bordered select-sm w-full">
                         <option value="">None</option>
-                        <option :for={album <- @all_albums} value={album.id} selected={album.id == @editing_track.album_id}>
+                        <option
+                          :for={album <- @all_albums}
+                          value={album.id}
+                          selected={album.id == @editing_track.album_id}
+                        >
                           {album.title}
                         </option>
                       </select>
                     </div>
                     <button type="submit" class="btn btn-primary btn-sm">Save</button>
-                    <button type="button" class="btn btn-ghost btn-sm" phx-click="cancel_track_edit">Cancel</button>
+                    <button type="button" class="btn btn-ghost btn-sm" phx-click="cancel_track_edit">
+                      Cancel
+                    </button>
                   </.form>
                 </div>
               </li>
@@ -737,7 +776,6 @@ defmodule TuneboxWeb.PlayerLive do
         <div class="card bg-base-200 shadow-sm">
           <div class="card-body p-4">
             <div class="flex items-center gap-6">
-
               <%!-- Now Playing --%>
               <div class="flex-1 min-w-0">
                 <p class="text-xs font-semibold uppercase tracking-wide opacity-50">Now Playing</p>
@@ -751,13 +789,28 @@ defmodule TuneboxWeb.PlayerLive do
 
               <%!-- Transport controls --%>
               <div class="flex items-center gap-1 flex-shrink-0">
-                <button class="btn btn-ghost btn-circle btn-sm" title="Previous track" phx-click="prev_track" disabled={@track_list == []}>
+                <button
+                  class="btn btn-ghost btn-circle btn-sm"
+                  title="Previous track"
+                  phx-click="prev_track"
+                  disabled={@track_list == []}
+                >
                   <.icon name="hero-backward" class="w-4 h-4" />
                 </button>
-                <button class="btn btn-ghost btn-circle btn-sm" title="Rewind 10 seconds" phx-click="rewind" disabled={@playback_state == :stopped}>
+                <button
+                  class="btn btn-ghost btn-circle btn-sm"
+                  title="Rewind 10 seconds"
+                  phx-click="rewind"
+                  disabled={@playback_state == :stopped}
+                >
                   <.icon name="hero-arrow-uturn-left" class="w-4 h-4" />
                 </button>
-                <button class="btn btn-ghost btn-circle btn-sm" title="Stop" phx-click="stop" disabled={@playback_state == :stopped}>
+                <button
+                  class="btn btn-ghost btn-circle btn-sm"
+                  title="Stop"
+                  phx-click="stop"
+                  disabled={@playback_state == :stopped}
+                >
                   <.icon name="hero-stop" class="w-4 h-4" />
                 </button>
                 <button
@@ -777,17 +830,29 @@ defmodule TuneboxWeb.PlayerLive do
                 >
                   <.icon name="hero-pause" class="w-5 h-5" />
                 </button>
-                <button class="btn btn-ghost btn-circle btn-sm" title="Fast forward 10 seconds" phx-click="fast_forward" disabled={@playback_state == :stopped}>
+                <button
+                  class="btn btn-ghost btn-circle btn-sm"
+                  title="Fast forward 10 seconds"
+                  phx-click="fast_forward"
+                  disabled={@playback_state == :stopped}
+                >
                   <.icon name="hero-arrow-uturn-right" class="w-4 h-4" />
                 </button>
-                <button class="btn btn-ghost btn-circle btn-sm" title="Next track" phx-click="next_track" disabled={@track_list == []}>
+                <button
+                  class="btn btn-ghost btn-circle btn-sm"
+                  title="Next track"
+                  phx-click="next_track"
+                  disabled={@track_list == []}
+                >
                   <.icon name="hero-forward" class="w-4 h-4" />
                 </button>
               </div>
 
               <%!-- Import --%>
               <div class="flex-shrink-0 flex flex-col gap-1">
-                <p class="text-xs font-semibold uppercase tracking-wide opacity-50 mb-1">Music Library</p>
+                <p class="text-xs font-semibold uppercase tracking-wide opacity-50 mb-1">
+                  Music Library
+                </p>
                 <form phx-submit="import" class="flex gap-2 items-start">
                   <div class="flex flex-col gap-1">
                     <input
@@ -805,9 +870,14 @@ defmodule TuneboxWeb.PlayerLive do
                     {if @importing, do: "Importing…", else: "Import"}
                   </button>
                 </form>
-                <p :if={@importing && @import_current_folder} class="text-xs opacity-50 truncate" title={@import_current_folder}>{@import_current_folder}</p>
+                <p
+                  :if={@importing && @import_current_folder}
+                  class="text-xs opacity-50 truncate"
+                  title={@import_current_folder}
+                >
+                  {@import_current_folder}
+                </p>
               </div>
-
             </div>
 
             <%!-- Progress bar --%>
