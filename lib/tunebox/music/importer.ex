@@ -19,10 +19,16 @@ defmodule TuneBox.Music.Importer do
 
       TuneBox.Music.Importer.import("/home/user/Music")
   """
-  def import(directory) do
+  def import(directory, on_progress \\ nil) do
     directory
     |> scan_files()
-    |> Enum.each(&import_file/1)
+    |> Enum.each(fn file_path ->
+      if is_function(on_progress, 1) do
+        on_progress.(Path.dirname(file_path))
+      end
+
+      import_file(file_path)
+    end)
   end
 
   @doc """
