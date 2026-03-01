@@ -602,6 +602,19 @@ defmodule TuneboxWeb.PlayerLive do
             </li>
           </ul>
           <p :if={@artists == []} class="text-sm opacity-50 text-center py-2">No artists yet.</p>
+          <div class="mt-4 pt-4 border-t border-base-content/10 flex items-center gap-3">
+            <span class="text-sm">Max visible tracks</span>
+            <form phx-change="set_max_tracks">
+              <input
+                type="number"
+                name="max"
+                value={@max_visible_tracks}
+                min="3"
+                max="100"
+                class="input input-bordered input-sm w-20 text-center"
+              />
+            </form>
+          </div>
         </div>
       </div>
 
@@ -619,20 +632,7 @@ defmodule TuneboxWeb.PlayerLive do
                 >
                   <.icon name="hero-plus" class="w-4 h-4" />
                 </button>
-                <button class="btn btn-ghost btn-xs" title="Shuffle" phx-click="shuffle">
-                  <.icon name="hero-arrow-path" class="w-4 h-4" />
-                </button>
-                <form phx-change="set_max_tracks" class="flex items-center ml-1">
-                  <input
-                    type="number"
-                    name="max"
-                    value={@max_visible_tracks}
-                    min="3"
-                    max="100"
-                    title="Max visible tracks"
-                    class="input input-bordered input-xs w-14 text-center"
-                  />
-                </form>
+
               </div>
             </div>
             <ul
