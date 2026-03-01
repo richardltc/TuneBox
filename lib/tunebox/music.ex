@@ -49,7 +49,7 @@ defmodule TuneBox.Music do
   def list_live_tracks do
     LiveTrack
     |> order_by(:position)
-    |> preload(track: :artist)
+    |> preload(track: [:artist, :album])
     |> Repo.all()
   end
 
