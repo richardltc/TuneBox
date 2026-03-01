@@ -3,7 +3,7 @@ defmodule TuneboxWeb.PlayerLive do
 
   alias TuneBox.Config
   alias TuneBox.Music
-  alias TuneBox.Music.Importer
+  alias TuneBox.Music.{ArtworkFetcher, Importer}
   alias TuneBox.Player
 
   def mount(_params, _session, socket) do
@@ -81,6 +81,12 @@ defmodule TuneboxWeb.PlayerLive do
         else
           socket
         end
+
+      parent = self()
+      Task.start(fn ->
+        ArtworkFetcher.fetch_for_track(new_track)
+        send(parent, :reload_tracks)
+      end)
 
       {:noreply, socket}
     end
@@ -415,6 +421,10 @@ defmodule TuneboxWeb.PlayerLive do
     {:noreply, assign(socket, :duration, dur)}
   end
 
+  def handle_info(:reload_tracks, socket) do
+    {:noreply, reload_tracks(socket, Music.list_live_tracks())}
+  end
+
   def handle_info({:import_error, message}, socket) do
     {:noreply,
      socket
@@ -616,24 +626,36 @@ defmodule TuneboxWeb.PlayerLive do
                 phx-click="select_track"
                 phx-value-id={track.id}
               >
-                <.icon
-                  name={
-                    if @selected_track && @selected_track.id == track.id,
-                      do: "hero-speaker-wave",
-                      else: "hero-musical-note"
-                  }
-                  class={[
-                    "w-4 h-4 flex-shrink-0",
-                    cond do
-                      @playback_state == :playing && @playing_track && @playing_track.id == track.id ->
-                        "animate-bounce text-white"
-                      @selected_track && @selected_track.id == track.id ->
-                        "text-white"
-                      true ->
-                        "opacity-60"
-                    end
-                  ]}
-                />
+                <%= if track.album && track.album.cover_big do %>
+                  <img
+                    src={"data:image/jpeg;base64,#{Base.encode64(track.album.cover_big)}"}
+                    class={[
+                      "w-8 h-8 rounded object-cover flex-shrink-0",
+                      if(@playback_state == :playing && @playing_track && @playing_track.id == track.id,
+                        do: "animate-bounce"
+                      )
+                    ]}
+                  />
+                <% else %>
+                  <.icon
+                    name={
+                      if @selected_track && @selected_track.id == track.id,
+                        do: "hero-speaker-wave",
+                        else: "hero-musical-note"
+                    }
+                    class={[
+                      "w-4 h-4 flex-shrink-0",
+                      cond do
+                        @playback_state == :playing && @playing_track && @playing_track.id == track.id ->
+                          "animate-bounce text-white"
+                        @selected_track && @selected_track.id == track.id ->
+                          "text-white"
+                        true ->
+                          "opacity-60"
+                      end
+                    ]}
+                  />
+                <% end %>
                 <div class="min-w-0 flex-1">
                   <div class="truncate text-sm font-medium">{track.title}</div>
                   <div class="truncate text-xs opacity-60">

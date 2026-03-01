@@ -4,6 +4,7 @@ defmodule TuneBox.Music.Artist do
 
   schema "artists" do
     field(:name, :string)
+    field(:picture_big, :binary)
 
     has_many(:albums, TuneBox.Music.Album)
     has_many(:tracks, TuneBox.Music.Track)
@@ -13,7 +14,7 @@ defmodule TuneBox.Music.Artist do
 
   def changeset(artist, attrs) do
     artist
-    |> cast(attrs, [:name])
+    |> cast(attrs, [:name, :picture_big])
     |> validate_required([:name])
     |> unique_constraint(:name)
   end

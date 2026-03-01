@@ -6,6 +6,7 @@ defmodule TuneBox.Music.Album do
     field(:title, :string)
     field(:year, :integer)
     field(:genre, :string)
+    field(:cover_big, :binary)
 
     belongs_to(:artist, TuneBox.Music.Artist)
     has_many(:tracks, TuneBox.Music.Track)
@@ -15,7 +16,7 @@ defmodule TuneBox.Music.Album do
 
   def changeset(album, attrs) do
     album
-    |> cast(attrs, [:title, :artist_id, :year, :genre])
+    |> cast(attrs, [:title, :artist_id, :year, :genre, :cover_big])
     |> validate_required([:title, :artist_id])
     |> foreign_key_constraint(:artist_id)
     |> unique_constraint([:title, :artist_id])
