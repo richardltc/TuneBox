@@ -36,7 +36,12 @@ defmodule TuneBox.Player do
           "--no-video",
           "--no-terminal",
           "--msg-level=all=v",
-          "--audio-device=auto"
+          "--audio-device=auto",
+          "--audio-buffer=1",
+          "--cache=yes",
+          "--demuxer-max-bytes=50M",
+          "--demuxer-readahead-secs=30",
+          "--gapless-audio=yes"
         ]
       ])
 
