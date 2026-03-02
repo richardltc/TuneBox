@@ -205,6 +205,7 @@ defmodule TuneboxWeb.PlayerLive do
      socket
      |> assign(:playback_state, :stopped)
      |> assign(:playing_track, nil)
+     |> assign(:time_pos, 0.0)
      |> stream(:tracks, socket.assigns.track_list, reset: true)}
   end
 
