@@ -83,12 +83,7 @@ defmodule TuneboxWeb.PlayerLive do
           socket
         end
 
-      parent = self()
-
-      Task.start(fn ->
-        ArtworkFetcher.fetch_for_track(new_track)
-        send(parent, :reload_tracks)
-      end)
+      maybe_fetch_artwork(new_track)
 
       {:noreply, socket}
     end
@@ -492,6 +487,8 @@ defmodule TuneboxWeb.PlayerLive do
           |> assign(:selected_track, new_track)
           |> stream(:tracks, track_list, reset: true)
 
+        maybe_fetch_artwork(new_track)
+
         if was_playing and socket.assigns.player_available do
           Player.play(new_track.file_path)
           assign(socket, :playing_track, new_track)
@@ -531,6 +528,7 @@ defmodule TuneboxWeb.PlayerLive do
           new_track = Enum.at(new_list, new_index)
 
           Player.play(new_track.file_path)
+          maybe_fetch_artwork(new_track)
 
           socket
           |> assign(:selected_track, new_track)
@@ -538,6 +536,15 @@ defmodule TuneboxWeb.PlayerLive do
           |> stream(:tracks, new_list, reset: true)
       end
     end
+  end
+
+  defp maybe_fetch_artwork(track) do
+    parent = self()
+
+    Task.start(fn ->
+      ArtworkFetcher.fetch_for_track(track)
+      send(parent, :reload_tracks)
+    end)
   end
 
   defp format_time(seconds) when is_number(seconds) do
