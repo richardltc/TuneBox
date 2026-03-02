@@ -107,12 +107,10 @@ defmodule TuneBox.Player do
 
   @impl true
   def handle_cast({:play, file}, state) do
-    load = %{command: ["loadfile", file]} |> Jason.encode!()
-    seek = %{command: ["seek", 0, "absolute"]} |> Jason.encode!()
+    load = %{command: ["loadfile", file, "replace", "start=0"]} |> Jason.encode!()
     unpause = %{command: ["set_property", "pause", false]} |> Jason.encode!()
     IO.puts("Sending command: #{load}")
     send_to_mpv(state.socket, load)
-    send_to_mpv(state.socket, seek)
     send_to_mpv(state.socket, unpause)
     {:noreply, state}
   end
