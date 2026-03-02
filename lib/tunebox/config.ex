@@ -7,6 +7,7 @@ defmodule TuneBox.Config do
     field(:max_visible_tracks, :integer, default: 10)
     field(:paused_time_pos, :float, default: 0.0)
     field(:paused_duration, :float, default: 0.0)
+    field(:remove_completed_tracks, :boolean, default: false)
 
     belongs_to :paused_track, TuneBox.Music.Track
 
@@ -15,7 +16,14 @@ defmodule TuneBox.Config do
 
   def changeset(config, attrs) do
     config
-    |> cast(attrs, [:music_library_path, :max_visible_tracks, :paused_track_id, :paused_time_pos, :paused_duration])
+    |> cast(attrs, [
+      :music_library_path,
+      :max_visible_tracks,
+      :paused_track_id,
+      :paused_time_pos,
+      :paused_duration,
+      :remove_completed_tracks
+    ])
   end
 
   @doc """
@@ -81,6 +89,22 @@ defmodule TuneBox.Config do
   def clear_paused_state do
     get()
     |> changeset(%{paused_track_id: nil, paused_time_pos: 0.0, paused_duration: 0.0})
+    |> TuneBox.Repo.update!()
+  end
+
+  @doc """
+  Returns whether completed tracks should be removed from the live list.
+  """
+  def remove_completed_tracks? do
+    get().remove_completed_tracks || false
+  end
+
+  @doc """
+  Sets whether completed tracks should be removed from the live list.
+  """
+  def set_remove_completed_tracks(value) when is_boolean(value) do
+    get()
+    |> changeset(%{remove_completed_tracks: value})
     |> TuneBox.Repo.update!()
   end
 
