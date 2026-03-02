@@ -52,6 +52,7 @@ defmodule TuneboxWeb.PlayerLive do
       |> assign(:all_artists, [])
       |> assign(:all_albums, [])
       |> assign(:max_visible_tracks, Config.max_visible_tracks())
+      |> assign(:remove_completed_tracks, Config.remove_completed_tracks?())
 
     {:ok, socket}
   end
@@ -379,6 +380,12 @@ defmodule TuneboxWeb.PlayerLive do
     {:noreply, assign(socket, :max_visible_tracks, max)}
   end
 
+  def handle_event("toggle_remove_completed_tracks", _params, socket) do
+    new_value = !socket.assigns.remove_completed_tracks
+    Config.set_remove_completed_tracks(new_value)
+    {:noreply, assign(socket, :remove_completed_tracks, new_value)}
+  end
+
   def handle_event("delete_artist", %{"id" => id}, socket) do
     artist = Enum.find(socket.assigns.artists, &(&1.id == String.to_integer(id)))
 
@@ -413,7 +420,11 @@ defmodule TuneboxWeb.PlayerLive do
 
   def handle_info(:track_ended, socket) do
     if socket.assigns.playback_state == :playing do
-      {:noreply, select_adjacent_track(socket, 1)}
+      if socket.assigns.remove_completed_tracks do
+        {:noreply, remove_completed_and_advance(socket, socket.assigns.playing_track)}
+      else
+        {:noreply, select_adjacent_track(socket, 1)}
+      end
     else
       {:noreply, socket}
     end
@@ -486,6 +497,45 @@ defmodule TuneboxWeb.PlayerLive do
         else
           socket
         end
+    end
+  end
+
+  defp remove_completed_and_advance(socket, nil), do: select_adjacent_track(socket, 1)
+
+  defp remove_completed_and_advance(socket, completed_track) do
+    track_list = socket.assigns.track_list
+    current_index = Enum.find_index(track_list, &(&1.id == completed_track.id))
+
+    if current_index == nil do
+      select_adjacent_track(socket, 1)
+    else
+      Music.delete_live_track(completed_track.id)
+      new_list = List.delete_at(track_list, current_index)
+
+      socket =
+        socket
+        |> assign(:track_list, new_list)
+        |> assign(:track_map, Map.new(new_list, &{&1.id, &1}))
+
+      case new_list do
+        [] ->
+          socket
+          |> assign(:selected_track, nil)
+          |> assign(:playing_track, nil)
+          |> assign(:playback_state, :stopped)
+          |> stream(:tracks, [], reset: true)
+
+        _ ->
+          new_index = min(current_index, length(new_list) - 1)
+          new_track = Enum.at(new_list, new_index)
+
+          Player.play(new_track.file_path)
+
+          socket
+          |> assign(:selected_track, new_track)
+          |> assign(:playing_track, new_track)
+          |> stream(:tracks, new_list, reset: true)
+      end
     end
   end
 
@@ -614,6 +664,18 @@ defmodule TuneboxWeb.PlayerLive do
                 class="input input-bordered input-sm w-20 text-center"
               />
             </form>
+          </div>
+          <div class="mt-3 flex items-center gap-3">
+            <input
+              type="checkbox"
+              id="remove_completed_tracks"
+              class="checkbox checkbox-sm"
+              checked={@remove_completed_tracks}
+              phx-click="toggle_remove_completed_tracks"
+            />
+            <label for="remove_completed_tracks" class="text-sm cursor-pointer">
+              Remove completed tracks
+            </label>
           </div>
         </div>
       </div>
