@@ -451,11 +451,19 @@ defmodule TuneboxWeb.PlayerLive do
   end
 
   def handle_info({:time_pos, pos}, socket) do
-    {:noreply, assign(socket, :time_pos, pos)}
+    if socket.assigns.playback_state in [:playing, :paused] do
+      {:noreply, assign(socket, :time_pos, pos)}
+    else
+      {:noreply, socket}
+    end
   end
 
   def handle_info({:duration, dur}, socket) do
-    {:noreply, assign(socket, :duration, dur)}
+    if socket.assigns.playback_state in [:playing, :paused] do
+      {:noreply, assign(socket, :duration, dur)}
+    else
+      {:noreply, socket}
+    end
   end
 
   def handle_info(:reload_tracks, socket) do
