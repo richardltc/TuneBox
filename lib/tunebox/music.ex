@@ -134,11 +134,62 @@ defmodule TuneBox.Music do
     Track
     |> where([t], like(t.title, ^pattern) or t.id in subquery(artist_track_ids))
     |> limit(10)
-    |> preload(:artist)
+    |> preload([:artist, :album])
     |> Repo.all()
   end
 
   def search_tracks(_), do: []
+
+  @doc """
+  Searches artists by name. Returns up to 5 matches.
+  """
+  def search_artists(query) when is_binary(query) and query != "" do
+    pattern = "%#{query}%"
+
+    Artist
+    |> where([a], like(a.name, ^pattern))
+    |> limit(5)
+    |> Repo.all()
+  end
+
+  def search_artists(_), do: []
+
+  @doc """
+  Searches albums by title. Returns up to 5 matches with artist preloaded.
+  """
+  def search_albums(query) when is_binary(query) and query != "" do
+    pattern = "%#{query}%"
+
+    Album
+    |> where([a], like(a.title, ^pattern))
+    |> limit(5)
+    |> preload(:artist)
+    |> Repo.all()
+  end
+
+  def search_albums(_), do: []
+
+  @doc """
+  Returns all tracks for an artist, preloaded with artist and album.
+  """
+  def tracks_for_artist(artist_id) do
+    Track
+    |> where([t], t.artist_id == ^artist_id)
+    |> order_by(:title)
+    |> preload([:artist, :album])
+    |> Repo.all()
+  end
+
+  @doc """
+  Returns all tracks for an album, preloaded with artist and album.
+  """
+  def tracks_for_album(album_id) do
+    Track
+    |> where([t], t.album_id == ^album_id)
+    |> order_by(:track_number)
+    |> preload([:artist, :album])
+    |> Repo.all()
+  end
 
   @doc """
   Adds a track to the end of the live tracks list.
