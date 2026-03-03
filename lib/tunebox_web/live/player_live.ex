@@ -43,6 +43,11 @@ defmodule TuneboxWeb.PlayerLive do
       |> assign(:music_library_path, Config.music_library_path() || "")
       |> assign(:search_query, "")
       |> assign(:search_results, [])
+      |> assign(:search_artists, [])
+      |> assign(:search_albums, [])
+      |> assign(:expanded_artist, nil)
+      |> assign(:expanded_album, nil)
+      |> assign(:expanded_tracks, [])
       |> assign(:show_settings, false)
       |> assign(:artists, [])
       |> assign(:editing_artist, nil)
@@ -99,7 +104,57 @@ defmodule TuneboxWeb.PlayerLive do
 
   def handle_event("search", %{"query" => query}, socket) do
     results = Music.search_tracks(query)
-    {:noreply, socket |> assign(:search_query, query) |> assign(:search_results, results)}
+    artists = Music.search_artists(query)
+    albums = Music.search_albums(query)
+
+    {:noreply,
+     socket
+     |> assign(:search_query, query)
+     |> assign(:search_results, results)
+     |> assign(:search_artists, artists)
+     |> assign(:search_albums, albums)
+     |> assign(:expanded_artist, nil)
+     |> assign(:expanded_album, nil)
+     |> assign(:expanded_tracks, [])}
+  end
+
+  def handle_event("expand_artist", %{"id" => id}, socket) do
+    artist_id = String.to_integer(id)
+
+    if socket.assigns.expanded_artist == artist_id do
+      {:noreply,
+       socket
+       |> assign(:expanded_artist, nil)
+       |> assign(:expanded_tracks, [])}
+    else
+      tracks = Music.tracks_for_artist(artist_id)
+
+      {:noreply,
+       socket
+       |> assign(:expanded_artist, artist_id)
+       |> assign(:expanded_album, nil)
+       |> assign(:expanded_tracks, tracks)}
+    end
+  end
+
+  def handle_event("expand_album", %{"id" => id}, socket) do
+    album_id = String.to_integer(id)
+
+    if socket.assigns.expanded_album == album_id do
+      {:noreply,
+       socket
+       |> assign(:expanded_album, nil)
+       |> assign(:expanded_tracks, [])}
+    else
+      tracks = Music.tracks_for_album(album_id)
+
+      {:noreply,
+       socket
+       |> assign(:expanded_album, nil)
+       |> assign(:expanded_artist, nil)
+       |> assign(:expanded_tracks, tracks)
+       |> assign(:expanded_album, album_id)}
+    end
   end
 
   def handle_event("add_to_live", %{"id" => id}, socket) do
@@ -617,26 +672,158 @@ defmodule TuneboxWeb.PlayerLive do
             />
           </form>
           <ul
-            :if={@search_results != []}
+            :if={@search_artists != [] or @search_albums != [] or @search_results != []}
             class="absolute z-10 w-full mt-1 bg-base-200 rounded-lg shadow-lg max-h-80 overflow-y-auto"
           >
-            <li
-              :for={track <- @search_results}
-              class="flex items-center justify-between gap-2 px-3 py-2 hover:bg-base-300 transition-colors"
-            >
-              <div class="min-w-0">
-                <div class="truncate text-sm font-medium">{track.title}</div>
-                <div class="truncate text-xs opacity-60">{track.artist.name}</div>
-              </div>
-              <button
-                class="btn btn-ghost btn-xs btn-square flex-shrink-0"
-                title="Add to Live Tracks"
-                phx-click="add_to_live"
-                phx-value-id={track.id}
+            <%!-- Artists section --%>
+            <%= if @search_artists != [] do %>
+              <li class="px-3 py-1.5 text-xs font-semibold uppercase tracking-wide opacity-50">
+                Artists
+              </li>
+              <%= for artist <- @search_artists do %>
+                <li>
+                  <button
+                    class="w-full flex items-center justify-between gap-2 px-3 py-2 hover:bg-base-300 transition-colors"
+                    phx-click="expand_artist"
+                    phx-value-id={artist.id}
+                  >
+                    <div class="flex items-center gap-2 min-w-0">
+                      <%= if artist.picture_big do %>
+                        <img
+                          src={"data:image/jpeg;base64,#{Base.encode64(artist.picture_big)}"}
+                          class="w-10 h-10 rounded-full object-cover flex-shrink-0"
+                        />
+                      <% else %>
+                        <.icon name="hero-user" class="w-4 h-4 opacity-60 flex-shrink-0" />
+                      <% end %>
+                      <span class="truncate text-sm font-medium">{artist.name}</span>
+                    </div>
+                    <.icon
+                      name={if @expanded_artist == artist.id, do: "hero-chevron-up", else: "hero-chevron-down"}
+                      class="w-3.5 h-3.5 opacity-60 flex-shrink-0"
+                    />
+                  </button>
+                  <%= if @expanded_artist == artist.id do %>
+                    <ul class="bg-base-300/50">
+                      <li
+                        :for={track <- @expanded_tracks}
+                        class="flex items-center gap-2 px-3 pl-9 py-1.5 hover:bg-base-300 transition-colors"
+                      >
+                        <%= if track.album && track.album.cover_big do %>
+                          <img
+                            src={"data:image/jpeg;base64,#{Base.encode64(track.album.cover_big)}"}
+                            class="w-10 h-10 rounded object-cover flex-shrink-0"
+                          />
+                        <% end %>
+                        <div class="min-w-0 flex-1">
+                          <div class="truncate text-sm">{track.title}</div>
+                          <div :if={track.album} class="truncate text-xs opacity-60">
+                            {track.album.title}
+                          </div>
+                        </div>
+                        <button
+                          class="btn btn-ghost btn-xs btn-square flex-shrink-0"
+                          title="Add to Live Tracks"
+                          phx-click="add_to_live"
+                          phx-value-id={track.id}
+                        >
+                          <.icon name="hero-plus" class="w-3.5 h-3.5" />
+                        </button>
+                      </li>
+                    </ul>
+                  <% end %>
+                </li>
+              <% end %>
+            <% end %>
+            <%!-- Albums section --%>
+            <%= if @search_albums != [] do %>
+              <li class="px-3 py-1.5 text-xs font-semibold uppercase tracking-wide opacity-50">
+                Albums
+              </li>
+              <%= for album <- @search_albums do %>
+                <li>
+                  <button
+                    class="w-full flex items-center justify-between gap-2 px-3 py-2 hover:bg-base-300 transition-colors"
+                    phx-click="expand_album"
+                    phx-value-id={album.id}
+                  >
+                    <div class="flex items-center gap-2 min-w-0">
+                      <%= if album.cover_big do %>
+                        <img
+                          src={"data:image/jpeg;base64,#{Base.encode64(album.cover_big)}"}
+                          class="w-10 h-10 rounded object-cover flex-shrink-0"
+                        />
+                      <% else %>
+                        <.icon name="hero-rectangle-stack" class="w-4 h-4 opacity-60 flex-shrink-0" />
+                      <% end %>
+                      <div class="min-w-0">
+                        <span class="truncate text-sm font-medium">{album.title}</span>
+                        <span class="text-xs opacity-60"> - {album.artist.name}</span>
+                      </div>
+                    </div>
+                    <.icon
+                      name={if @expanded_album == album.id, do: "hero-chevron-up", else: "hero-chevron-down"}
+                      class="w-3.5 h-3.5 opacity-60 flex-shrink-0"
+                    />
+                  </button>
+                  <%= if @expanded_album == album.id do %>
+                    <ul class="bg-base-300/50">
+                      <li
+                        :for={track <- @expanded_tracks}
+                        class="flex items-center gap-2 px-3 pl-9 py-1.5 hover:bg-base-300 transition-colors"
+                      >
+                        <%= if track.album && track.album.cover_big do %>
+                          <img
+                            src={"data:image/jpeg;base64,#{Base.encode64(track.album.cover_big)}"}
+                            class="w-10 h-10 rounded object-cover flex-shrink-0"
+                          />
+                        <% end %>
+                        <div class="min-w-0 flex-1">
+                          <div class="truncate text-sm">{track.title}</div>
+                        </div>
+                        <button
+                          class="btn btn-ghost btn-xs btn-square flex-shrink-0"
+                          title="Add to Live Tracks"
+                          phx-click="add_to_live"
+                          phx-value-id={track.id}
+                        >
+                          <.icon name="hero-plus" class="w-3.5 h-3.5" />
+                        </button>
+                      </li>
+                    </ul>
+                  <% end %>
+                </li>
+              <% end %>
+            <% end %>
+            <%!-- Tracks section --%>
+            <%= if @search_results != [] do %>
+              <li class="px-3 py-1.5 text-xs font-semibold uppercase tracking-wide opacity-50">
+                Tracks
+              </li>
+              <li
+                :for={track <- @search_results}
+                class="flex items-center gap-2 px-3 py-2 hover:bg-base-300 transition-colors"
               >
-                <.icon name="hero-plus" class="w-3.5 h-3.5" />
-              </button>
-            </li>
+                <%= if track.album && track.album.cover_big do %>
+                  <img
+                    src={"data:image/jpeg;base64,#{Base.encode64(track.album.cover_big)}"}
+                    class="w-10 h-10 rounded object-cover flex-shrink-0"
+                  />
+                <% end %>
+                <div class="min-w-0 flex-1">
+                  <div class="truncate text-sm font-medium">{track.title}</div>
+                  <div class="truncate text-xs opacity-60">{track.artist.name}</div>
+                </div>
+                <button
+                  class="btn btn-ghost btn-xs btn-square flex-shrink-0"
+                  title="Add to Live Tracks"
+                  phx-click="add_to_live"
+                  phx-value-id={track.id}
+                >
+                  <.icon name="hero-plus" class="w-3.5 h-3.5" />
+                </button>
+              </li>
+            <% end %>
           </ul>
         </div>
       </div>
