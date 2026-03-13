@@ -20,6 +20,8 @@ defmodule TuneBox.Music.Importer do
       TuneBox.Music.Importer.import("/home/user/Music")
   """
   def import(directory, on_progress \\ nil) do
+    prune_missing_files()
+
     directory
     |> scan_files()
     |> Enum.each(fn file_path ->
@@ -28,6 +30,21 @@ defmodule TuneBox.Music.Importer do
       end
 
       import_file(file_path)
+    end)
+  end
+
+  @doc """
+  Removes tracks from the database whose files no longer exist on disk.
+  Associated live_tracks are cascade-deleted automatically.
+  """
+  def prune_missing_files do
+    Track
+    |> Repo.all()
+    |> Enum.each(fn track ->
+      unless File.exists?(track.file_path) do
+        Logger.info("Pruning missing file: #{track.file_path}")
+        Repo.delete(track)
+      end
     end)
   end
 
