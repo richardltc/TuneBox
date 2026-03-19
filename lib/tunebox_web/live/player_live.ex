@@ -58,6 +58,11 @@ defmodule TuneboxWeb.PlayerLive do
       |> assign(:all_albums, [])
       |> assign(:max_visible_tracks, Config.max_visible_tracks())
       |> assign(:remove_completed_tracks, Config.remove_completed_tracks?())
+      |> assign(:show_convert, false)
+      |> assign(:flac_files, [])
+      |> assign(:scanning_flac, false)
+      |> assign(:flac_selected, MapSet.new())
+      |> assign(:show_import, false)
 
     {:ok, socket}
   end
@@ -478,6 +483,50 @@ defmodule TuneboxWeb.PlayerLive do
     end
   end
 
+  def handle_event("toggle_convert", _params, socket) do
+    {:noreply, assign(socket, :show_convert, !socket.assigns.show_convert)}
+  end
+
+  def handle_event("toggle_import", _params, socket) do
+    {:noreply, assign(socket, :show_import, !socket.assigns.show_import)}
+  end
+
+  def handle_event("toggle_flac_file", %{"path" => path}, socket) do
+    selected = socket.assigns.flac_selected
+
+    new_selected =
+      if MapSet.member?(selected, path),
+        do: MapSet.delete(selected, path),
+        else: MapSet.put(selected, path)
+
+    {:noreply, assign(socket, :flac_selected, new_selected)}
+  end
+
+  def handle_event("scan_flac", _params, socket) do
+    path = socket.assigns.music_library_path
+
+    cond do
+      path == "" ->
+        {:noreply, put_flash(socket, :error, "Set a music library path first.")}
+
+      not File.dir?(path) ->
+        {:noreply, put_flash(socket, :error, "Library folder doesn't exist.")}
+
+      true ->
+        parent = self()
+
+        Task.start(fn ->
+          files = Path.wildcard(Path.join(path, "**/*.flac"))
+          send(parent, {:flac_scan_done, files})
+        end)
+
+        {:noreply,
+         socket
+         |> assign(:scanning_flac, true)
+         |> assign(:flac_selected, MapSet.new())}
+    end
+  end
+
   def handle_info(:import_done, socket) do
     socket =
       socket
@@ -523,6 +572,13 @@ defmodule TuneboxWeb.PlayerLive do
 
   def handle_info(:reload_tracks, socket) do
     {:noreply, reload_tracks(socket, Music.list_live_tracks())}
+  end
+
+  def handle_info({:flac_scan_done, files}, socket) do
+    {:noreply,
+     socket
+     |> assign(:flac_files, files)
+     |> assign(:scanning_flac, false)}
   end
 
   def handle_info({:import_error, message}, socket) do
@@ -851,7 +907,7 @@ defmodule TuneboxWeb.PlayerLive do
               Cancel
             </button>
           </.form>
-          <ul class="space-y-1">
+          <ul class="space-y-1 overflow-y-auto" style="max-height: 25rem">
             <li
               :for={artist <- @artists}
               class="flex items-center justify-between px-3 py-2 rounded-lg hover:bg-base-300 transition-colors"
@@ -907,7 +963,123 @@ defmodule TuneboxWeb.PlayerLive do
         </div>
       </div>
 
-      <div class="flex flex-col gap-4">
+      <div class="flex gap-4 items-start">
+        <%!-- Left column --%>
+        <div class="w-96 flex-shrink-0 flex flex-col gap-4">
+          <%!-- Import accordion --%>
+          <div class="card bg-base-200 shadow-sm">
+            <div class="card-body p-0">
+              <button
+                class="flex items-center justify-between w-full px-4 py-3 text-left hover:bg-base-300 transition-colors rounded-2xl"
+                phx-click="toggle_import"
+              >
+                <div class="flex items-center gap-2">
+                  <.icon name="hero-folder-arrow-down" class="w-4 h-4 opacity-70" />
+                  <span class="font-semibold text-sm">Import Library</span>
+                  <span :if={@importing} class="loading loading-spinner loading-xs opacity-60" />
+                </div>
+                <.icon
+                  name={if @show_import, do: "hero-chevron-up", else: "hero-chevron-down"}
+                  class="w-4 h-4 opacity-60"
+                />
+              </button>
+              <div :if={@show_import} class="px-4 pb-4">
+                <form phx-submit="import" class="flex gap-2 items-center">
+                  <input
+                    type="text"
+                    name="path"
+                    value={@music_library_path}
+                    placeholder="/home/user/Music"
+                    class="input input-bordered input-sm flex-1"
+                    disabled={@importing}
+                  />
+                  <button type="submit" class="btn btn-primary btn-sm flex-shrink-0" disabled={@importing}>
+                    <.icon :if={@importing} name="hero-arrow-path" class="w-4 h-4 animate-spin" />
+                    {if @importing, do: "Importing…", else: "Import"}
+                  </button>
+                </form>
+                <p :if={@import_error} class="text-xs text-error mt-1">{@import_error}</p>
+                <p
+                  :if={@importing && @import_current_folder}
+                  class="text-xs opacity-50 truncate mt-1"
+                  title={@import_current_folder}
+                >
+                  {Path.relative_to(@import_current_folder, @music_library_path)}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <%!-- Convert accordion --%>
+          <div class="card bg-base-200 shadow-sm">
+            <div class="card-body p-0">
+              <button
+                class="flex items-center justify-between w-full px-4 py-3 text-left hover:bg-base-300 transition-colors rounded-2xl"
+                phx-click="toggle_convert"
+              >
+                <div class="flex items-center gap-2">
+                  <.icon name="hero-arrow-path-rounded-square" class="w-4 h-4 opacity-70" />
+                  <span class="font-semibold text-sm">Convert</span>
+                </div>
+                <.icon
+                  name={if @show_convert, do: "hero-chevron-up", else: "hero-chevron-down"}
+                  class="w-4 h-4 opacity-60"
+                />
+              </button>
+              <div :if={@show_convert} class="px-4 pb-4">
+                <div class="flex items-center justify-between mb-3">
+                  <span class="text-xs opacity-60">
+                    {length(@flac_files)} FLAC file{if length(@flac_files) != 1, do: "s", else: ""}
+                  </span>
+                  <button
+                    class="btn btn-primary btn-xs"
+                    phx-click="scan_flac"
+                    disabled={@scanning_flac}
+                  >
+                    <.icon :if={@scanning_flac} name="hero-arrow-path" class="w-3.5 h-3.5 animate-spin" />
+                    {if @scanning_flac, do: "Scanning…", else: "Scan"}
+                  </button>
+                </div>
+                <ul class="space-y-0.5 overflow-y-auto" style="max-height: 24rem">
+                  <li
+                    :for={path <- @flac_files}
+                    class="group flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-base-300 transition-colors cursor-pointer"
+                    title={path}
+                    phx-click="toggle_flac_file"
+                    phx-value-path={path}
+                  >
+                    <input
+                      type="checkbox"
+                      class="checkbox checkbox-xs flex-shrink-0"
+                      checked={MapSet.member?(@flac_selected, path)}
+                      phx-click="toggle_flac_file"
+                      phx-value-path={path}
+                      onclick="event.stopPropagation()"
+                    />
+                    <.icon name="hero-musical-note" class="w-4 h-4 flex-shrink-0 opacity-60" />
+                    <div class="min-w-0 flex-1">
+                      <div class="truncate text-sm font-medium">
+                        {Path.basename(path, ".flac")}
+                      </div>
+                      <div class="truncate text-xs opacity-60">
+                        {Path.dirname(path) |> Path.basename()}
+                      </div>
+                    </div>
+                  </li>
+                  <li
+                    :if={@flac_files == [] and not @scanning_flac}
+                    class="text-xs opacity-50 text-center py-4"
+                  >
+                    Press Scan to find FLAC files
+                  </li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <%!-- Right: main content --%>
+        <div class="flex flex-col gap-4 flex-1 min-w-0">
         <%!-- Track list --%>
         <div class="card bg-base-200 shadow-sm">
           <div class="card-body p-4">
@@ -1137,36 +1309,6 @@ defmodule TuneboxWeb.PlayerLive do
                 </button>
               </div>
 
-              <%!-- Import --%>
-              <div class="flex-shrink-0 flex flex-col gap-1">
-                <p class="text-xs font-semibold uppercase tracking-wide opacity-50 mb-1">
-                  Music Library
-                </p>
-                <form phx-submit="import" class="flex gap-2 items-start">
-                  <div class="flex flex-col gap-1">
-                    <input
-                      type="text"
-                      name="path"
-                      value={@music_library_path}
-                      placeholder="/home/user/Music"
-                      class="input input-bordered input-sm w-48"
-                      disabled={@importing}
-                    />
-                    <p :if={@import_error} class="text-xs text-error">{@import_error}</p>
-                  </div>
-                  <button type="submit" class="btn btn-primary btn-sm" disabled={@importing}>
-                    <.icon :if={@importing} name="hero-arrow-path" class="w-4 h-4 animate-spin" />
-                    {if @importing, do: "Importing…", else: "Import"}
-                  </button>
-                </form>
-                <p
-                  :if={@importing && @import_current_folder}
-                  class="text-xs opacity-50 truncate"
-                  title={@import_current_folder}
-                >
-                  {@import_current_folder}
-                </p>
-              </div>
             </div>
 
             <%!-- Progress bar --%>
@@ -1186,6 +1328,7 @@ defmodule TuneboxWeb.PlayerLive do
             </div>
           </div>
         </div>
+        </div><%!-- /right column --%>
       </div>
     </Layouts.app>
     """
