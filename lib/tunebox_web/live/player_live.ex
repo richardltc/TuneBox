@@ -62,6 +62,10 @@ defmodule TuneboxWeb.PlayerLive do
       |> assign(:flac_files, [])
       |> assign(:scanning_flac, false)
       |> assign(:flac_selected, MapSet.new())
+      |> assign(:convert_bitrate, "192k")
+      |> assign(:converting, false)
+      |> assign(:convert_delete_original, false)
+      |> assign(:convert_conflicts, nil)
       |> assign(:show_import, false)
 
     {:ok, socket}
@@ -527,6 +531,85 @@ defmodule TuneboxWeb.PlayerLive do
     end
   end
 
+  def handle_event("toggle_convert_delete_original", _params, socket) do
+    {:noreply, assign(socket, :convert_delete_original, !socket.assigns.convert_delete_original)}
+  end
+
+  def handle_event("set_convert_bitrate", %{"bitrate" => bitrate}, socket) do
+    valid = ["96k", "128k", "192k", "256k", "320k"]
+    if bitrate in valid do
+      {:noreply, assign(socket, :convert_bitrate, bitrate)}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  def handle_event("convert_flac", _params, socket) do
+    selected = MapSet.to_list(socket.assigns.flac_selected)
+
+    if selected == [] do
+      {:noreply, put_flash(socket, :error, "Select at least one FLAC file to convert.")}
+    else
+      conflicts = Enum.filter(selected, fn path ->
+        File.exists?(Path.rootname(path) <> ".opus")
+      end)
+
+      if conflicts == [] do
+        {:noreply, do_convert(socket, selected, overwrite: false)}
+      else
+        {:noreply, assign(socket, :convert_conflicts, conflicts)}
+      end
+    end
+  end
+
+  def handle_event("convert_skip_existing", _params, socket) do
+    selected = MapSet.to_list(socket.assigns.flac_selected)
+    to_convert = Enum.reject(selected, fn path ->
+      File.exists?(Path.rootname(path) <> ".opus")
+    end)
+
+    socket = assign(socket, :convert_conflicts, nil)
+
+    if to_convert == [] do
+      {:noreply, put_flash(socket, :info, "No new files to convert.")}
+    else
+      {:noreply, do_convert(socket, to_convert, overwrite: false)}
+    end
+  end
+
+  def handle_event("convert_overwrite_all", _params, socket) do
+    selected = MapSet.to_list(socket.assigns.flac_selected)
+    socket = assign(socket, :convert_conflicts, nil)
+    {:noreply, do_convert(socket, selected, overwrite: true)}
+  end
+
+  def handle_event("dismiss_convert_conflicts", _params, socket) do
+    {:noreply, assign(socket, :convert_conflicts, nil)}
+  end
+
+  defp do_convert(socket, paths, opts) do
+    bitrate = socket.assigns.convert_bitrate
+    delete_original = socket.assigns.convert_delete_original
+    overwrite = Keyword.get(opts, :overwrite, false)
+    parent = self()
+
+    Task.start(fn ->
+      results =
+        Enum.map(paths, fn path ->
+          TuneBox.Music.Converter.convert(path,
+            bitrate: bitrate,
+            delete_original: delete_original,
+            overwrite: overwrite
+          )
+        end)
+
+      errors = Enum.filter(results, &match?({:error, _}, &1))
+      send(parent, {:convert_done, length(paths), length(errors)})
+    end)
+
+    assign(socket, :converting, true)
+  end
+
   def handle_info(:import_done, socket) do
     socket =
       socket
@@ -579,6 +662,22 @@ defmodule TuneboxWeb.PlayerLive do
      socket
      |> assign(:flac_files, files)
      |> assign(:scanning_flac, false)}
+  end
+
+  def handle_info({:convert_done, total, 0}, socket) do
+    {:noreply,
+     socket
+     |> assign(:converting, false)
+     |> put_flash(:info, "Converted #{total} file#{if total != 1, do: "s", else: ""} successfully.")}
+  end
+
+  def handle_info({:convert_done, total, error_count}, socket) do
+    ok = total - error_count
+
+    {:noreply,
+     socket
+     |> assign(:converting, false)
+     |> put_flash(:error, "#{ok} converted, #{error_count} failed.")}
   end
 
   def handle_info({:import_error, message}, socket) do
@@ -1040,9 +1139,28 @@ defmodule TuneboxWeb.PlayerLive do
                     {if @scanning_flac, do: "Scanning…", else: "Scan"}
                   </button>
                 </div>
+                <%!-- Bitrate selector --%>
+                <div class="mb-3">
+                  <label class="text-xs opacity-60 block mb-1.5">Opus bitrate</label>
+                  <div class="flex gap-1.5 flex-wrap">
+                    <%= for {label, value} <- [{"96k", "96k"}, {"128k", "128k"}, {"192k", "192k"}, {"256k", "256k"}, {"320k", "320k"}] do %>
+                      <button
+                        class={[
+                          "btn btn-xs",
+                          if(@convert_bitrate == value, do: "btn-primary", else: "btn-ghost")
+                        ]}
+                        phx-click="set_convert_bitrate"
+                        phx-value-bitrate={value}
+                      >
+                        {label}{if value == "192k", do: " ★", else: ""}
+                      </button>
+                    <% end %>
+                  </div>
+                </div>
                 <ul class="space-y-0.5 overflow-y-auto" style="max-height: 24rem">
                   <li
                     :for={path <- @flac_files}
+                    id={"flac-#{:erlang.phash2(path)}"}
                     class="group flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-base-300 transition-colors cursor-pointer"
                     title={path}
                     phx-click="toggle_flac_file"
@@ -1050,11 +1168,10 @@ defmodule TuneboxWeb.PlayerLive do
                   >
                     <input
                       type="checkbox"
+                      id={"flac-cb-#{:erlang.phash2(path)}"}
                       class="checkbox checkbox-xs flex-shrink-0"
                       checked={MapSet.member?(@flac_selected, path)}
-                      phx-click="toggle_flac_file"
-                      phx-value-path={path}
-                      onclick="event.stopPropagation()"
+                      onclick="event.preventDefault()"
                     />
                     <.icon name="hero-musical-note" class="w-4 h-4 flex-shrink-0 opacity-60" />
                     <div class="min-w-0 flex-1">
@@ -1073,6 +1190,33 @@ defmodule TuneboxWeb.PlayerLive do
                     Press Scan to find FLAC files
                   </li>
                 </ul>
+                <%!-- Delete original option --%>
+                <div :if={@flac_files != []} class="mt-3 flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="convert_delete_original"
+                    class="checkbox checkbox-xs"
+                    checked={@convert_delete_original}
+                    phx-click="toggle_convert_delete_original"
+                  />
+                  <label for="convert_delete_original" class="text-xs cursor-pointer select-none">
+                    Delete original FLAC after conversion
+                  </label>
+                </div>
+                <%!-- Convert button --%>
+                <div :if={@flac_files != []} class="mt-2 flex items-center justify-between">
+                  <span class="text-xs opacity-50">
+                    {MapSet.size(@flac_selected)} selected
+                  </span>
+                  <button
+                    class="btn btn-primary btn-sm"
+                    phx-click="convert_flac"
+                    disabled={@converting or MapSet.size(@flac_selected) == 0}
+                  >
+                    <.icon :if={@converting} name="hero-arrow-path" class="w-3.5 h-3.5 animate-spin" />
+                    {if @converting, do: "Converting…", else: "Convert to Opus"}
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -1329,6 +1473,32 @@ defmodule TuneboxWeb.PlayerLive do
           </div>
         </div>
         </div><%!-- /right column --%>
+      </div>
+      <%!-- Overwrite confirmation modal --%>
+      <div :if={@convert_conflicts} class="modal modal-open">
+        <div class="modal-box max-w-md">
+          <h3 class="font-bold text-lg mb-2">File already exists</h3>
+          <p class="text-sm opacity-70 mb-3">
+            {length(@convert_conflicts)} .opus file{if length(@convert_conflicts) != 1, do: "s already exist", else: " already exists"}. What would you like to do?
+          </p>
+          <ul class="text-xs opacity-60 space-y-0.5 mb-4 max-h-40 overflow-y-auto">
+            <li :for={path <- @convert_conflicts} class="truncate">
+              {Path.basename(path, ".flac")}.opus
+            </li>
+          </ul>
+          <div class="modal-action flex gap-2 justify-end">
+            <button class="btn btn-ghost btn-sm" phx-click="dismiss_convert_conflicts">
+              Cancel
+            </button>
+            <button class="btn btn-outline btn-sm" phx-click="convert_skip_existing">
+              Skip existing
+            </button>
+            <button class="btn btn-primary btn-sm" phx-click="convert_overwrite_all">
+              Overwrite all
+            </button>
+          </div>
+        </div>
+        <div class="modal-backdrop" phx-click="dismiss_convert_conflicts"></div>
       </div>
     </Layouts.app>
     """
