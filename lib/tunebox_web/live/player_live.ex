@@ -66,6 +66,7 @@ defmodule TuneboxWeb.PlayerLive do
       |> assign(:converting, false)
       |> assign(:convert_delete_original, false)
       |> assign(:convert_conflicts, nil)
+      |> assign(:convert_results, nil)
       |> assign(:show_import, false)
 
     {:ok, socket}
@@ -587,6 +588,10 @@ defmodule TuneboxWeb.PlayerLive do
     {:noreply, assign(socket, :convert_conflicts, nil)}
   end
 
+  def handle_event("dismiss_convert_results", _params, socket) do
+    {:noreply, assign(socket, :convert_results, nil)}
+  end
+
   defp do_convert(socket, paths, opts) do
     bitrate = socket.assigns.convert_bitrate
     delete_original = socket.assigns.convert_delete_original
@@ -596,15 +601,29 @@ defmodule TuneboxWeb.PlayerLive do
     Task.start(fn ->
       results =
         Enum.map(paths, fn path ->
-          TuneBox.Music.Converter.convert(path,
-            bitrate: bitrate,
-            delete_original: delete_original,
-            overwrite: overwrite
-          )
+          original_size = case File.stat(path) do
+            {:ok, %{size: s}} -> s
+            _ -> nil
+          end
+
+          case TuneBox.Music.Converter.convert(path,
+                 bitrate: bitrate,
+                 delete_original: delete_original,
+                 overwrite: overwrite
+               ) do
+            {:ok, output_path} ->
+              opus_size = case File.stat(output_path) do
+                {:ok, %{size: s}} -> s
+                _ -> nil
+              end
+              {:ok, Path.basename(path), original_size, opus_size}
+
+            {:error, reason} ->
+              {:error, Path.basename(path), reason}
+          end
         end)
 
-      errors = Enum.filter(results, &match?({:error, _}, &1))
-      send(parent, {:convert_done, length(paths), length(errors)})
+      send(parent, {:convert_done, results})
     end)
 
     assign(socket, :converting, true)
@@ -664,20 +683,11 @@ defmodule TuneboxWeb.PlayerLive do
      |> assign(:scanning_flac, false)}
   end
 
-  def handle_info({:convert_done, total, 0}, socket) do
+  def handle_info({:convert_done, results}, socket) do
     {:noreply,
      socket
      |> assign(:converting, false)
-     |> put_flash(:info, "Converted #{total} file#{if total != 1, do: "s", else: ""} successfully.")}
-  end
-
-  def handle_info({:convert_done, total, error_count}, socket) do
-    ok = total - error_count
-
-    {:noreply,
-     socket
-     |> assign(:converting, false)
-     |> put_flash(:error, "#{ok} converted, #{error_count} failed.")}
+     |> assign(:convert_results, results)}
   end
 
   def handle_info({:import_error, message}, socket) do
@@ -1474,6 +1484,37 @@ defmodule TuneboxWeb.PlayerLive do
         </div>
         </div><%!-- /right column --%>
       </div>
+      <%!-- Conversion results panel --%>
+      <div :if={@convert_results} class="modal modal-open">
+        <div class="modal-box max-w-lg">
+          <h3 class="font-bold text-lg mb-3">Conversion results</h3>
+          <ul class="space-y-2 max-h-80 overflow-y-auto mb-4">
+            <li :for={result <- @convert_results}>
+              <%= case result do %>
+                <% {:ok, name, orig, opus} -> %>
+                  <div class="flex items-start gap-2 text-sm">
+                    <.icon name="hero-check-circle" class="w-4 h-4 text-success mt-0.5 flex-shrink-0" />
+                    <div class="min-w-0">
+                      <div class="font-medium truncate">{name}</div>
+                      <div class="text-xs opacity-60">
+                        {format_bytes(orig)} → {format_bytes(opus)}
+                      </div>
+                    </div>
+                  </div>
+                <% {:error, name, _reason} -> %>
+                  <div class="flex items-start gap-2 text-sm">
+                    <.icon name="hero-x-circle" class="w-4 h-4 text-error mt-0.5 flex-shrink-0" />
+                    <div class="font-medium truncate text-error">{name}</div>
+                  </div>
+              <% end %>
+            </li>
+          </ul>
+          <div class="modal-action">
+            <button class="btn btn-primary btn-sm" phx-click="dismiss_convert_results">Done</button>
+          </div>
+        </div>
+        <div class="modal-backdrop" phx-click="dismiss_convert_results"></div>
+      </div>
       <%!-- Overwrite confirmation modal --%>
       <div :if={@convert_conflicts} class="modal modal-open">
         <div class="modal-box max-w-md">
@@ -1503,4 +1544,9 @@ defmodule TuneboxWeb.PlayerLive do
     </Layouts.app>
     """
   end
+
+  defp format_bytes(nil), do: "unknown"
+  defp format_bytes(bytes) when bytes < 1024, do: "#{bytes} B"
+  defp format_bytes(bytes) when bytes < 1_048_576, do: "#{Float.round(bytes / 1024, 1)} KB"
+  defp format_bytes(bytes), do: "#{Float.round(bytes / 1_048_576, 1)} MB"
 end
