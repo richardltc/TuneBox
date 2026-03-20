@@ -11,21 +11,19 @@ defmodule TuneBox.Music.Converter do
   Options:
     - `:delete_original` - if true, deletes the source file after successful conversion (default: false)
     - `:bitrate` - opus bitrate, e.g. "192k" (default: "192k")
+    - `:overwrite` - if true, passes `-y` to ffmpeg to overwrite existing output files (default: false)
 
   Returns `{:ok, output_path}` or `{:error, reason}`.
   """
   def convert(source_path, opts \\ []) do
     delete_original = Keyword.get(opts, :delete_original, false)
     bitrate = Keyword.get(opts, :bitrate, "192k")
+    overwrite = Keyword.get(opts, :overwrite, false)
     output_path = Path.rootname(source_path) <> ".opus"
 
-    args = [
-      "-i", source_path,
-      "-c:a", "libopus",
-      "-b:a", bitrate,
-      "-vn",
-      output_path
-    ]
+    overwrite_flag = if overwrite, do: ["-y"], else: []
+
+    args = overwrite_flag ++ ["-i", source_path, "-c:a", "libopus", "-b:a", bitrate, "-vn", output_path]
 
     Logger.info("Converting #{source_path} -> #{output_path}")
 
