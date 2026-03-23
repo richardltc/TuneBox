@@ -1343,9 +1343,10 @@ defmodule TuneboxWeb.PlayerLive do
                       <span class="truncate font-medium">{entry.track.title}</span>
                       <span class="truncate text-xs opacity-60">{entry.track.artist.name}</span>
                     </div>
-                    <span class="text-xs opacity-40 flex-shrink-0">
-                      {Calendar.strftime(entry.played_at, "%b %d, %H:%M")}
-                    </span>
+                    <div class="flex flex-col items-end gap-0.5 flex-shrink-0">
+                      <span class="text-xs opacity-40">{Calendar.strftime(entry.played_at, "%b %d, %H:%M")}</span>
+                      <span class="text-xs opacity-40">{entry.track.play_count}×</span>
+                    </div>
                   </li>
                 </ul>
               </div>
