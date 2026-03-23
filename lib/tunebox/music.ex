@@ -195,12 +195,17 @@ defmodule TuneBox.Music do
   Records a play event for the given track_id.
   """
   def record_play(track_id) do
-    %PlayHistory{}
-    |> PlayHistory.changeset(%{
-      track_id: track_id,
-      played_at: NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
-    })
-    |> Repo.insert()
+    now = NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
+
+    Repo.transaction(fn ->
+      %PlayHistory{}
+      |> PlayHistory.changeset(%{track_id: track_id, played_at: now})
+      |> Repo.insert!()
+
+      Track
+      |> where(id: ^track_id)
+      |> Repo.update_all(inc: [play_count: 1])
+    end)
   end
 
   @doc """

@@ -12,6 +12,7 @@ defmodule TuneBox.Music.Track do
     field(:file_size, :integer)
     field(:bit_rate, :integer)
     field(:sample_rate, :integer)
+    field(:play_count, :integer, default: 0)
 
     belongs_to(:artist, TuneBox.Music.Artist)
     belongs_to(:album, TuneBox.Music.Album)
