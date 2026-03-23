@@ -12,6 +12,7 @@ defmodule TuneBox.Player do
   def rewind, do: GenServer.cast(__MODULE__, {:seek, -10})
   def fast_forward, do: GenServer.cast(__MODULE__, {:seek, 10})
   def seek_absolute(seconds), do: GenServer.cast(__MODULE__, {:seek_absolute, seconds})
+  def get_status, do: GenServer.call(__MODULE__, :get_status)
 
   # --- Server Callbacks ---
   @impl true
@@ -48,7 +49,18 @@ defmodule TuneBox.Player do
     # Wait a bit for the socket to be created
     Process.send_after(self(), :check_socket, 100)
 
-    {:ok, %{port: port, socket_path: socket_path, socket_type: socket_type, socket: nil}}
+    {:ok,
+     %{
+       port: port,
+       socket_path: socket_path,
+       socket_type: socket_type,
+       socket: nil,
+       current_file: nil,
+       paused: true,
+       time_pos: 0.0,
+       duration: 0.0,
+       last_ended_file: nil
+     }}
   end
 
   defp get_socket_config do
@@ -117,7 +129,7 @@ defmodule TuneBox.Player do
     IO.puts("Sending command: #{load}")
     send_to_mpv(state.socket, load)
     send_to_mpv(state.socket, unpause)
-    {:noreply, state}
+    {:noreply, %{state | current_file: file, paused: false, time_pos: 0.0, last_ended_file: nil}}
   end
 
   @impl true
@@ -128,7 +140,7 @@ defmodule TuneBox.Player do
     IO.puts("Sending command: #{load}")
     send_to_mpv(state.socket, load)
     send_to_mpv(state.socket, unpause)
-    {:noreply, state}
+    {:noreply, %{state | current_file: file, paused: false, last_ended_file: nil}}
   end
 
   @impl true
@@ -136,7 +148,7 @@ defmodule TuneBox.Player do
     command = %{command: ["set_property", "pause", false]} |> Jason.encode!()
     IO.puts("Sending command: #{command}")
     send_to_mpv(state.socket, command)
-    {:noreply, state}
+    {:noreply, %{state | paused: false}}
   end
 
   @impl true
@@ -144,7 +156,7 @@ defmodule TuneBox.Player do
     command = %{command: ["set_property", "pause", true]} |> Jason.encode!()
     IO.puts("Sending command: #{command}")
     send_to_mpv(state.socket, command)
-    {:noreply, state}
+    {:noreply, %{state | paused: true}}
   end
 
   @impl true
@@ -152,7 +164,7 @@ defmodule TuneBox.Player do
     command = %{command: ["stop"]} |> Jason.encode!()
     IO.puts("Sending command: #{command}")
     send_to_mpv(state.socket, command)
-    {:noreply, state}
+    {:noreply, %{state | current_file: nil, paused: true, time_pos: 0.0, duration: 0.0}}
   end
 
   @impl true
@@ -193,22 +205,31 @@ defmodule TuneBox.Player do
   end
 
   @impl true
+  def handle_call(:get_status, _from, state) do
+    {:reply, {state.current_file, state.paused, state.time_pos, state.duration, state.last_ended_file}, state}
+  end
+
+  @impl true
   def handle_info({:tcp, _socket, data}, state) do
-    case Jason.decode(data) do
-      {:ok, %{"event" => "property-change", "name" => "time-pos", "data" => pos}}
-          when is_number(pos) ->
-        Phoenix.PubSub.broadcast(Tunebox.PubSub, "player:status", {:time_pos, pos})
+    state =
+      case Jason.decode(data) do
+        {:ok, %{"event" => "property-change", "name" => "time-pos", "data" => pos}}
+            when is_number(pos) ->
+          Phoenix.PubSub.broadcast(Tunebox.PubSub, "player:status", {:time_pos, pos})
+          %{state | time_pos: pos}
 
-      {:ok, %{"event" => "property-change", "name" => "duration", "data" => dur}}
-          when is_number(dur) ->
-        Phoenix.PubSub.broadcast(Tunebox.PubSub, "player:status", {:duration, dur})
+        {:ok, %{"event" => "property-change", "name" => "duration", "data" => dur}}
+            when is_number(dur) ->
+          Phoenix.PubSub.broadcast(Tunebox.PubSub, "player:status", {:duration, dur})
+          %{state | duration: dur}
 
-      {:ok, %{"event" => "end-file", "reason" => "eof"}} ->
-        Phoenix.PubSub.broadcast(Tunebox.PubSub, "player:status", :track_ended)
+        {:ok, %{"event" => "end-file", "reason" => "eof"}} ->
+          Phoenix.PubSub.broadcast(Tunebox.PubSub, "player:status", :track_ended)
+          %{state | last_ended_file: state.current_file, current_file: nil, paused: true, time_pos: 0.0, duration: 0.0}
 
-      _ ->
-        :ok
-    end
+        _ ->
+          state
+      end
 
     {:noreply, state}
   end

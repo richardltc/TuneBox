@@ -1,8 +1,8 @@
-defmodule TuneBox.Music.LiveTrack do
+defmodule TuneBox.Music.QueuedTrack do
   use Ecto.Schema
   import Ecto.Changeset
 
-  schema "live_tracks" do
+  schema "queued_tracks" do
     field(:position, :integer)
 
     belongs_to(:track, TuneBox.Music.Track)
@@ -10,8 +10,8 @@ defmodule TuneBox.Music.LiveTrack do
     timestamps()
   end
 
-  def changeset(live_track, attrs) do
-    live_track
+  def changeset(queued_track, attrs) do
+    queued_track
     |> cast(attrs, [:position, :track_id])
     |> validate_required([:position, :track_id])
     |> unique_constraint(:track_id)

@@ -35,7 +35,7 @@ defmodule TuneBox.Music.Importer do
 
   @doc """
   Removes tracks from the database whose files no longer exist on disk.
-  Associated live_tracks are cascade-deleted automatically.
+  Associated queued_tracks are cascade-deleted automatically.
   """
   def prune_missing_files do
     Track

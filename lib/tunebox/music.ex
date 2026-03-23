@@ -2,7 +2,7 @@ defmodule TuneBox.Music do
   import Ecto.Query
 
   alias TuneBox.Repo
-  alias TuneBox.Music.{Album, Artist, Track, LiveTrack}
+  alias TuneBox.Music.{Album, Artist, Track, QueuedTrack, PlayHistory}
 
   def list_artists do
     Artist |> order_by(:name) |> Repo.all()
@@ -44,20 +44,20 @@ defmodule TuneBox.Music do
   end
 
   @doc """
-  Returns all live tracks ordered by position, with track and artist preloaded..
+  Returns all queued tracks ordered by position, with track and artist preloaded.
   """
-  def list_live_tracks do
-    LiveTrack
+  def list_queued_tracks do
+    QueuedTrack
     |> order_by(:position)
     |> preload(track: [:artist, :album])
     |> Repo.all()
   end
 
   @doc """
-  Clears the live_tracks table and inserts `count` random tracks.
-  Returns the new list of live tracks (with track and artist preloaded).
+  Clears the queued_tracks table and inserts `count` random tracks.
+  Returns the new list of queued tracks (with track and artist preloaded).
   """
-  def refresh_live_tracks(count \\ 10) do
+  def refresh_queued_tracks(count \\ 10) do
     track_ids =
       Track
       |> select([t], t.id)
@@ -75,21 +75,21 @@ defmodule TuneBox.Music do
       end)
 
     Repo.transaction(fn ->
-      Repo.delete_all(LiveTrack)
-      Repo.insert_all(LiveTrack, entries)
+      Repo.delete_all(QueuedTrack)
+      Repo.insert_all(QueuedTrack, entries)
     end)
 
-    list_live_tracks()
+    list_queued_tracks()
   end
 
   @doc """
-  Appends `count` random tracks (not already in the live list) to the end.
-  Returns the updated list of live tracks.
+  Appends `count` random tracks (not already in the queue) to the end.
+  Returns the updated list of queued tracks.
   """
-  def add_random_live_tracks(count \\ 10) do
+  def add_random_queued_tracks(count \\ 10) do
     existing_ids =
-      LiveTrack
-      |> select([lt], lt.track_id)
+      QueuedTrack
+      |> select([qt], qt.track_id)
       |> Repo.all()
 
     track_ids =
@@ -101,8 +101,8 @@ defmodule TuneBox.Music do
       |> Repo.all()
 
     max_position =
-      LiveTrack
-      |> select([lt], max(lt.position))
+      QueuedTrack
+      |> select([qt], max(qt.position))
       |> Repo.one() || 0
 
     now = NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
@@ -114,9 +114,9 @@ defmodule TuneBox.Music do
         %{track_id: track_id, position: position, inserted_at: now, updated_at: now}
       end)
 
-    if entries != [], do: Repo.insert_all(LiveTrack, entries)
+    if entries != [], do: Repo.insert_all(QueuedTrack, entries)
 
-    list_live_tracks()
+    list_queued_tracks()
   end
 
   @doc """
@@ -192,55 +192,79 @@ defmodule TuneBox.Music do
   end
 
   @doc """
-  Adds a track to the end of the live tracks list.
-  Does nothing if the track is already in the list.
+  Records a play event for the given track_id.
   """
-  def add_live_track(track_id) do
-    if Repo.get_by(LiveTrack, track_id: track_id) do
+  def record_play(track_id) do
+    %PlayHistory{}
+    |> PlayHistory.changeset(%{
+      track_id: track_id,
+      played_at: NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
+    })
+    |> Repo.insert()
+  end
+
+  @doc """
+  Returns the last `limit` play history entries ordered by most recent first,
+  with track, artist, and album preloaded.
+  """
+  def list_recent_plays(limit \\ 50) do
+    PlayHistory
+    |> order_by(desc: :played_at)
+    |> limit(^limit)
+    |> preload(track: [:artist, :album])
+    |> Repo.all()
+  end
+
+  @doc """
+  Adds a track to the end of the queue.
+  Does nothing if the track is already in the queue.
+  """
+  def add_queued_track(track_id) do
+    if Repo.get_by(QueuedTrack, track_id: track_id) do
       :already_exists
     else
       max_position =
-        LiveTrack
-        |> select([lt], max(lt.position))
+        QueuedTrack
+        |> select([qt], max(qt.position))
         |> Repo.one() || 0
 
-      %LiveTrack{}
-      |> LiveTrack.changeset(%{track_id: track_id, position: max_position + 1})
+      %QueuedTrack{}
+      |> QueuedTrack.changeset(%{track_id: track_id, position: max_position + 1})
       |> Repo.insert()
     end
   end
 
   @doc """
-  Deletes the live track for the given track_id.
+  Removes a track from the queue by track_id.
   """
-  def delete_live_track(track_id) do
-    LiveTrack
+  def delete_queued_track(track_id) do
+    QueuedTrack
     |> where(track_id: ^track_id)
     |> Repo.delete_all()
   end
 
   @doc """
-  Moves a live track up or down by swapping positions with its neighbor.
-  Returns the updated list of live tracks.
+  Moves a queued track up or down by swapping positions with its neighbor.
+  Returns the updated list of queued tracks.
   """
-  def move_live_track(track_id, direction) when direction in [:up, :down] do
-    case Repo.get_by(LiveTrack, track_id: track_id) do
+  def move_queued_track(track_id, direction) when direction in [:up, :down] do
+    case Repo.get_by(QueuedTrack, track_id: track_id) do
       nil ->
-        list_live_tracks()
+        list_queued_tracks()
 
-      live_track ->
+      queued_track ->
         neighbor =
           case direction do
             :up ->
-              LiveTrack
-              |> where([lt], lt.position < ^live_track.position)
+              QueuedTrack
+              |> where([qt], qt.position < ^queued_track.position)
               |> order_by(desc: :position)
               |> limit(1)
               |> Repo.one()
 
             :down ->
-              LiveTrack
-              |> where([lt], lt.position > ^live_track.position)
+              QueuedTrack
+              |> where([qt], qt.position > ^queued_track.position)
               |> order_by(asc: :position)
               |> limit(1)
               |> Repo.one()
@@ -248,14 +272,14 @@ defmodule TuneBox.Music do
 
         case neighbor do
           nil ->
-            list_live_tracks()
+            list_queued_tracks()
 
           neighbor ->
             Repo.transaction(fn ->
               # Temporarily set one to a placeholder to avoid unique constraint issues
-              {old_pos, new_pos} = {live_track.position, neighbor.position}
+              {old_pos, new_pos} = {queued_track.position, neighbor.position}
 
-              live_track
+              queued_track
               |> Ecto.Changeset.change(position: new_pos)
               |> Repo.update!()
 
@@ -264,7 +288,7 @@ defmodule TuneBox.Music do
               |> Repo.update!()
             end)
 
-            list_live_tracks()
+            list_queued_tracks()
         end
     end
   end
