@@ -7,22 +7,35 @@ defmodule TuneboxWeb.PlayerLive do
   alias TuneBox.Player
 
   def mount(_params, _session, socket) do
-    live_tracks = Music.list_live_tracks()
-    tracks = Enum.map(live_tracks, & &1.track)
+    queued_tracks = Music.list_queued_tracks()
+    tracks = Enum.map(queued_tracks, & &1.track)
     track_map = Map.new(tracks, &{&1.id, &1})
+
+    player_available = Process.whereis(TuneBox.Player) != nil
 
     if connected?(socket), do: Phoenix.PubSub.subscribe(Tunebox.PubSub, "player:status")
 
-    {restored_track, restored_time, restored_duration} =
-      case Config.get_paused_state() do
-        {track_id, time_pos, duration} ->
-          case Map.get(track_map, track_id) do
-            nil -> {nil, 0.0, 0.0}
-            track -> {track, time_pos, duration}
+    file_map = Map.new(tracks, &{&1.file_path, &1})
+
+    {restored_track, restored_playing_track, restored_time, restored_duration, restored_playback_state, missed_ended_file} =
+      cond do
+        connected?(socket) && player_available ->
+          case Player.get_status() do
+            {file, paused, time_pos, duration, _last_ended} when is_binary(file) ->
+              track = Map.get(file_map, file)
+              playback_state = if paused, do: :paused, else: :playing
+              playing_track = if paused, do: nil, else: track
+              {track, playing_track, time_pos, duration, playback_state, nil}
+
+            {nil, _, _, _, last_ended_file} when is_binary(last_ended_file) ->
+              {nil, nil, 0.0, 0.0, :stopped, last_ended_file}
+
+            _ ->
+              restore_from_config(track_map)
           end
 
-        nil ->
-          {nil, 0.0, 0.0}
+        true ->
+          restore_from_config(track_map)
       end
 
     socket =
@@ -31,9 +44,9 @@ defmodule TuneboxWeb.PlayerLive do
       |> assign(:track_list, tracks)
       |> assign(:track_map, track_map)
       |> assign(:selected_track, restored_track)
-      |> assign(:playing_track, nil)
-      |> assign(:playback_state, if(restored_track, do: :paused, else: :stopped))
-      |> assign(:player_available, Process.whereis(TuneBox.Player) != nil)
+      |> assign(:playing_track, restored_playing_track)
+      |> assign(:playback_state, restored_playback_state)
+      |> assign(:player_available, player_available)
       |> assign(:time_pos, restored_time)
       |> assign(:duration, restored_duration)
       |> assign(:importing, false)
@@ -68,6 +81,29 @@ defmodule TuneboxWeb.PlayerLive do
       |> assign(:convert_conflicts, nil)
       |> assign(:convert_results, nil)
       |> assign(:show_import, false)
+      |> assign(:show_history, false)
+      |> assign(:history_tracks, [])
+      |> assign(:play_recorded_for, nil)
+
+    socket =
+      if missed_ended_file && socket.assigns.player_available do
+        ended_track = Map.get(file_map, missed_ended_file)
+        if ended_track, do: Music.record_play(ended_track.id)
+
+        socket =
+          socket
+          |> assign(:selected_track, ended_track)
+          |> assign(:playing_track, ended_track)
+          |> assign(:playback_state, :playing)
+
+        if socket.assigns.remove_completed_tracks do
+          remove_completed_and_advance(socket, ended_track)
+        else
+          select_adjacent_track(socket, 1)
+        end
+      else
+        socket
+      end
 
     {:ok, socket}
   end
@@ -93,7 +129,7 @@ defmodule TuneboxWeb.PlayerLive do
       socket =
         if was_playing and socket.assigns.player_available do
           Player.play(new_track.file_path)
-          assign(socket, :playing_track, new_track)
+          socket |> assign(:playing_track, new_track) |> assign(:play_recorded_for, nil)
         else
           socket
         end
@@ -169,10 +205,10 @@ defmodule TuneboxWeb.PlayerLive do
 
   def handle_event("add_to_live", %{"id" => id}, socket) do
     track_id = String.to_integer(id)
-    Music.add_live_track(track_id)
-    live_tracks = Music.list_live_tracks()
+    Music.add_queued_track(track_id)
+    queued_tracks = Music.list_queued_tracks()
 
-    {:noreply, reload_tracks(socket, live_tracks)}
+    {:noreply, reload_tracks(socket, queued_tracks)}
   end
 
   def handle_event("import", %{"path" => path}, socket) do
@@ -237,6 +273,7 @@ defmodule TuneboxWeb.PlayerLive do
      socket
      |> assign(:playback_state, :playing)
      |> assign(:playing_track, assigns.selected_track)
+     |> assign(:play_recorded_for, nil)
      |> stream(:tracks, socket.assigns.track_list, reset: true)}
   end
 
@@ -280,21 +317,21 @@ defmodule TuneboxWeb.PlayerLive do
   end
 
   def handle_event("add_random", _params, socket) do
-    live_tracks = Music.add_random_live_tracks()
+    queued_tracks = Music.add_random_queued_tracks()
 
-    {:noreply, reload_tracks(socket, live_tracks)}
+    {:noreply, reload_tracks(socket, queued_tracks)}
   end
 
   def handle_event("shuffle", _params, socket) do
-    live_tracks = Music.refresh_live_tracks()
+    queued_tracks = Music.refresh_queued_tracks()
 
-    {:noreply, reload_tracks(socket, live_tracks, reset_selection: true)}
+    {:noreply, reload_tracks(socket, queued_tracks, reset_selection: true)}
   end
 
   def handle_event("delete_track", %{"id" => id}, socket) do
     track_id = String.to_integer(id)
-    Music.delete_live_track(track_id)
-    live_tracks = Music.list_live_tracks()
+    Music.delete_queued_track(track_id)
+    queued_tracks = Music.list_queued_tracks()
 
     selected = socket.assigns.selected_track
 
@@ -314,7 +351,7 @@ defmodule TuneboxWeb.PlayerLive do
         |> assign(:playing_track, nil)
         |> assign(:time_pos, 0.0)
         |> assign(:duration, 0.0)
-        |> reload_tracks(live_tracks, reset_selection: true)
+        |> reload_tracks(queued_tracks, reset_selection: true)
       else
         if is_playing && socket.assigns.player_available do
           Player.stop()
@@ -333,7 +370,7 @@ defmodule TuneboxWeb.PlayerLive do
             socket
           end
 
-        reload_tracks(socket, live_tracks)
+        reload_tracks(socket, queued_tracks)
       end
 
     {:noreply, socket}
@@ -342,9 +379,9 @@ defmodule TuneboxWeb.PlayerLive do
   def handle_event("move_track", %{"id" => id, "dir" => dir}, socket) do
     track_id = String.to_integer(id)
     direction = if dir == "up", do: :up, else: :down
-    live_tracks = Music.move_live_track(track_id, direction)
+    queued_tracks = Music.move_queued_track(track_id, direction)
 
-    {:noreply, reload_tracks(socket, live_tracks)}
+    {:noreply, reload_tracks(socket, queued_tracks)}
   end
 
   def handle_event("toggle_settings", _params, socket) do
@@ -381,14 +418,14 @@ defmodule TuneboxWeb.PlayerLive do
       artist ->
         case Music.update_artist(artist, artist_params) do
           {:ok, _artist} ->
-            live_tracks = Music.list_live_tracks()
+            queued_tracks = Music.list_queued_tracks()
 
             {:noreply,
              socket
              |> assign(:artists, Music.list_artists())
              |> assign(:editing_artist, nil)
              |> assign(:artist_form, to_form(Music.change_artist(%TuneBox.Music.Artist{})))
-             |> reload_tracks(live_tracks)}
+             |> reload_tracks(queued_tracks)}
 
           {:error, changeset} ->
             {:noreply, assign(socket, :artist_form, to_form(changeset))}
@@ -443,8 +480,8 @@ defmodule TuneboxWeb.PlayerLive do
 
     case Music.update_track(track, track_params) do
       {:ok, _updated} ->
-        live_tracks = Music.list_live_tracks()
-        tracks = Enum.map(live_tracks, & &1.track)
+        queued_tracks = Music.list_queued_tracks()
+        tracks = Enum.map(queued_tracks, & &1.track)
         updated_selected = Enum.find(tracks, &(&1.id == track.id))
 
         {:noreply,
@@ -452,7 +489,7 @@ defmodule TuneboxWeb.PlayerLive do
          |> assign(:editing_track, nil)
          |> assign(:track_form, nil)
          |> assign(:selected_track, updated_selected)
-         |> reload_tracks(live_tracks)}
+         |> reload_tracks(queued_tracks)}
 
       {:error, changeset} ->
         {:noreply, assign(socket, :track_form, to_form(changeset))}
@@ -476,13 +513,13 @@ defmodule TuneboxWeb.PlayerLive do
 
     if artist do
       Music.delete_artist(artist)
-      live_tracks = Music.list_live_tracks()
+      queued_tracks = Music.list_queued_tracks()
 
       {:noreply,
        socket
        |> assign(:artists, Music.list_artists())
        |> assign(:total_tracks, Music.count_tracks())
-       |> reload_tracks(live_tracks, reset_selection: true)}
+       |> reload_tracks(queued_tracks, reset_selection: true)}
     else
       {:noreply, socket}
     end
@@ -494,6 +531,19 @@ defmodule TuneboxWeb.PlayerLive do
 
   def handle_event("toggle_import", _params, socket) do
     {:noreply, assign(socket, :show_import, !socket.assigns.show_import)}
+  end
+
+  def handle_event("toggle_history", _params, socket) do
+    show = !socket.assigns.show_history
+
+    socket =
+      if show do
+        assign(socket, :history_tracks, Music.list_recent_plays())
+      else
+        socket
+      end
+
+    {:noreply, assign(socket, :show_history, show)}
   end
 
   def handle_event("toggle_flac_file", %{"path" => path}, socket) do
@@ -658,7 +708,26 @@ defmodule TuneboxWeb.PlayerLive do
 
   def handle_info({:time_pos, pos}, socket) do
     if socket.assigns.playback_state in [:playing, :paused] do
-      {:noreply, assign(socket, :time_pos, pos)}
+      socket = assign(socket, :time_pos, pos)
+      track = socket.assigns.playing_track
+
+      socket =
+        if pos >= 10 && track && socket.assigns.play_recorded_for != track.id do
+          Music.record_play(track.id)
+
+          socket =
+            if socket.assigns.show_history do
+              assign(socket, :history_tracks, Music.list_recent_plays())
+            else
+              socket
+            end
+
+          assign(socket, :play_recorded_for, track.id)
+        else
+          socket
+        end
+
+      {:noreply, socket}
     else
       {:noreply, socket}
     end
@@ -673,7 +742,7 @@ defmodule TuneboxWeb.PlayerLive do
   end
 
   def handle_info(:reload_tracks, socket) do
-    {:noreply, reload_tracks(socket, Music.list_live_tracks())}
+    {:noreply, reload_tracks(socket, Music.list_queued_tracks())}
   end
 
   def handle_info({:flac_scan_done, files}, socket) do
@@ -698,8 +767,8 @@ defmodule TuneboxWeb.PlayerLive do
      |> assign(:import_error, message)}
   end
 
-  defp reload_tracks(socket, live_tracks, opts \\ []) do
-    tracks = Enum.map(live_tracks, & &1.track)
+  defp reload_tracks(socket, queued_tracks, opts \\ []) do
+    tracks = Enum.map(queued_tracks, & &1.track)
 
     socket =
       socket
@@ -743,7 +812,7 @@ defmodule TuneboxWeb.PlayerLive do
 
         if was_playing and socket.assigns.player_available do
           Player.play(new_track.file_path)
-          assign(socket, :playing_track, new_track)
+          socket |> assign(:playing_track, new_track) |> assign(:play_recorded_for, nil)
         else
           socket
         end
@@ -759,7 +828,7 @@ defmodule TuneboxWeb.PlayerLive do
     if current_index == nil do
       select_adjacent_track(socket, 1)
     else
-      Music.delete_live_track(completed_track.id)
+      Music.delete_queued_track(completed_track.id)
       new_list = List.delete_at(track_list, current_index)
 
       socket =
@@ -785,8 +854,22 @@ defmodule TuneboxWeb.PlayerLive do
           socket
           |> assign(:selected_track, new_track)
           |> assign(:playing_track, new_track)
+          |> assign(:play_recorded_for, nil)
           |> stream(:tracks, new_list, reset: true)
       end
+    end
+  end
+
+  defp restore_from_config(track_map) do
+    case Config.get_paused_state() do
+      {track_id, time_pos, duration} ->
+        case Map.get(track_map, track_id) do
+          nil -> {nil, nil, 0.0, 0.0, :stopped, nil}
+          track -> {track, nil, time_pos, duration, :paused, nil}
+        end
+
+      nil ->
+        {nil, nil, 0.0, 0.0, :stopped, nil}
     end
   end
 
@@ -888,7 +971,7 @@ defmodule TuneboxWeb.PlayerLive do
                         </div>
                         <button
                           class="btn btn-ghost btn-xs btn-square flex-shrink-0"
-                          title="Add to Live Tracks"
+                          title="Add to Queue"
                           phx-click="add_to_live"
                           phx-value-id={track.id}
                         >
@@ -948,7 +1031,7 @@ defmodule TuneboxWeb.PlayerLive do
                         </div>
                         <button
                           class="btn btn-ghost btn-xs btn-square flex-shrink-0"
-                          title="Add to Live Tracks"
+                          title="Add to Queue"
                           phx-click="add_to_live"
                           phx-value-id={track.id}
                         >
@@ -981,7 +1064,7 @@ defmodule TuneboxWeb.PlayerLive do
                 </div>
                 <button
                   class="btn btn-ghost btn-xs btn-square flex-shrink-0"
-                  title="Add to Live Tracks"
+                  title="Add to Queue"
                   phx-click="add_to_live"
                   phx-value-id={track.id}
                 >
@@ -1230,6 +1313,44 @@ defmodule TuneboxWeb.PlayerLive do
               </div>
             </div>
           </div>
+
+          <%!-- Recently Played accordion --%>
+          <div class="card bg-base-200 shadow-sm">
+            <div class="card-body p-0">
+              <button
+                class="flex items-center justify-between w-full px-4 py-3 text-sm font-medium hover:bg-base-300 rounded-box transition-colors"
+                phx-click="toggle_history"
+              >
+                <div class="flex items-center gap-2">
+                  <.icon name="hero-clock" class="w-4 h-4" />
+                  <span>Recently Played</span>
+                </div>
+                <.icon name={if @show_history, do: "hero-chevron-up", else: "hero-chevron-down"} class="w-4 h-4" />
+              </button>
+              <div :if={@show_history} class="px-4 pb-4">
+                <div :if={@history_tracks == []} class="text-sm opacity-50 py-2">
+                  No tracks played yet.
+                </div>
+                <ul class="flex flex-col gap-1">
+                  <li
+                    :for={entry <- @history_tracks}
+                    class="flex items-center gap-2 py-1 text-sm cursor-pointer hover:bg-base-300 rounded px-2 -mx-2"
+                    phx-click="add_to_live"
+                    phx-value-id={entry.track.id}
+                    title={"Add to queue: #{entry.track.title}"}
+                  >
+                    <div class="flex flex-col min-w-0 flex-1">
+                      <span class="truncate font-medium">{entry.track.title}</span>
+                      <span class="truncate text-xs opacity-60">{entry.track.artist.name}</span>
+                    </div>
+                    <span class="text-xs opacity-40 flex-shrink-0">
+                      {Calendar.strftime(entry.played_at, "%b %d, %H:%M")}
+                    </span>
+                  </li>
+                </ul>
+              </div>
+            </div>
+          </div>
         </div>
 
         <%!-- Right: main content --%>
@@ -1238,7 +1359,7 @@ defmodule TuneboxWeb.PlayerLive do
         <div class="card bg-base-200 shadow-sm">
           <div class="card-body p-4">
             <div class="flex items-center justify-between mb-1">
-              <h2 class="card-title text-base">Live Tracks</h2>
+              <h2 class="card-title text-base">Queued Tracks</h2>
               <div class="flex items-center gap-0.5">
                 <button
                   class="btn btn-ghost btn-xs"
