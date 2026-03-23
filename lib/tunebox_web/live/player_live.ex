@@ -71,7 +71,7 @@ defmodule TuneboxWeb.PlayerLive do
       |> assign(:all_albums, [])
       |> assign(:max_visible_tracks, Config.max_visible_tracks())
       |> assign(:remove_completed_tracks, Config.remove_completed_tracks?())
-      |> assign(:show_convert, false)
+      |> assign(:show_convert, Config.show_convert?())
       |> assign(:flac_files, [])
       |> assign(:scanning_flac, false)
       |> assign(:flac_selected, MapSet.new())
@@ -80,10 +80,12 @@ defmodule TuneboxWeb.PlayerLive do
       |> assign(:convert_delete_original, false)
       |> assign(:convert_conflicts, nil)
       |> assign(:convert_results, nil)
-      |> assign(:show_import, false)
-      |> assign(:show_history, false)
-      |> assign(:history_tracks, [])
+      |> assign(:show_import, Config.show_import?())
+      |> assign(:show_history, Config.show_history?())
+      |> assign(:history_tracks, if(Config.show_history?(), do: Music.list_recent_plays(), else: []))
       |> assign(:play_recorded_for, nil)
+      |> assign(:time_pos_timer, nil)
+      |> assign(:pending_time_pos, nil)
 
     socket =
       if missed_ended_file && socket.assigns.player_available do
@@ -526,15 +528,21 @@ defmodule TuneboxWeb.PlayerLive do
   end
 
   def handle_event("toggle_convert", _params, socket) do
-    {:noreply, assign(socket, :show_convert, !socket.assigns.show_convert)}
+    show = !socket.assigns.show_convert
+    Config.set_show_convert(show)
+    {:noreply, assign(socket, :show_convert, show)}
   end
 
   def handle_event("toggle_import", _params, socket) do
-    {:noreply, assign(socket, :show_import, !socket.assigns.show_import)}
+    show = !socket.assigns.show_import
+    Config.set_show_import(show)
+    {:noreply, assign(socket, :show_import, show)}
   end
+
 
   def handle_event("toggle_history", _params, socket) do
     show = !socket.assigns.show_history
+    Config.set_show_history(show)
 
     socket =
       if show do
@@ -708,28 +716,28 @@ defmodule TuneboxWeb.PlayerLive do
 
   def handle_info({:time_pos, pos}, socket) do
     if socket.assigns.playback_state in [:playing, :paused] do
-      socket = assign(socket, :time_pos, pos)
-      track = socket.assigns.playing_track
-
-      socket =
-        if pos >= 10 && track && socket.assigns.play_recorded_for != track.id do
-          Music.record_play(track.id)
-
-          socket =
-            if socket.assigns.show_history do
-              assign(socket, :history_tracks, Music.list_recent_plays())
-            else
-              socket
-            end
-
-          assign(socket, :play_recorded_for, track.id)
-        else
-          socket
-        end
-
-      {:noreply, socket}
+      if socket.assigns.time_pos_timer do
+        # Throttle window active — store latest value for trailing update
+        {:noreply, assign(socket, :pending_time_pos, pos)}
+      else
+        # Apply immediately and open a 500ms throttle window
+        timer = Process.send_after(self(), :flush_time_pos, 500)
+        {:noreply, socket |> apply_time_pos(pos) |> assign(:time_pos_timer, timer)}
+      end
     else
       {:noreply, socket}
+    end
+  end
+
+  def handle_info(:flush_time_pos, socket) do
+    socket = assign(socket, :time_pos_timer, nil)
+
+    case socket.assigns.pending_time_pos do
+      nil ->
+        {:noreply, socket}
+
+      pos ->
+        {:noreply, socket |> assign(:pending_time_pos, nil) |> apply_time_pos(pos)}
     end
   end
 
@@ -857,6 +865,27 @@ defmodule TuneboxWeb.PlayerLive do
           |> assign(:play_recorded_for, nil)
           |> stream(:tracks, new_list, reset: true)
       end
+    end
+  end
+
+  defp apply_time_pos(socket, pos) do
+    prev_pos = socket.assigns.time_pos
+    socket = assign(socket, :time_pos, pos)
+    track = socket.assigns.playing_track
+
+    if prev_pos < 10 && pos >= 10 && track && socket.assigns.play_recorded_for != track.id do
+      Music.record_play(track.id)
+
+      socket =
+        if socket.assigns.show_history do
+          assign(socket, :history_tracks, Music.list_recent_plays())
+        else
+          socket
+        end
+
+      assign(socket, :play_recorded_for, track.id)
+    else
+      socket
     end
   end
 
@@ -1331,7 +1360,7 @@ defmodule TuneboxWeb.PlayerLive do
                 <div :if={@history_tracks == []} class="text-sm opacity-50 py-2">
                   No tracks played yet.
                 </div>
-                <ul class="flex flex-col gap-1">
+                <ul class="flex flex-col gap-1 max-h-[420px] overflow-y-auto">
                   <li
                     :for={entry <- @history_tracks}
                     class="flex items-center gap-2 py-1 text-sm cursor-pointer hover:bg-base-300 rounded px-2 -mx-2"
@@ -1339,6 +1368,20 @@ defmodule TuneboxWeb.PlayerLive do
                     phx-value-id={entry.track.id}
                     title={"Add to queue: #{entry.track.title}"}
                   >
+                    <%= cond do %>
+                      <% entry.track.album && entry.track.album.cover_big -> %>
+                        <img
+                          src={"data:image/jpeg;base64,#{Base.encode64(entry.track.album.cover_big)}"}
+                          class="w-8 h-8 rounded object-cover flex-shrink-0"
+                        />
+                      <% entry.track.artist.picture_big -> %>
+                        <img
+                          src={"data:image/jpeg;base64,#{Base.encode64(entry.track.artist.picture_big)}"}
+                          class="w-8 h-8 rounded object-cover flex-shrink-0"
+                        />
+                      <% true -> %>
+                        <div class="w-8 h-8 rounded bg-base-300 flex-shrink-0" />
+                    <% end %>
                     <div class="flex flex-col min-w-0 flex-1">
                       <span class="truncate font-medium">{entry.track.title}</span>
                       <span class="truncate text-xs opacity-60">{entry.track.artist.name}</span>
@@ -1594,7 +1637,7 @@ defmodule TuneboxWeb.PlayerLive do
               </span>
               <div class="flex-1 h-1.5 bg-base-300 rounded-full overflow-hidden">
                 <div
-                  class="h-full bg-primary rounded-full transition-[width] duration-500 ease-linear"
+                  class="h-full bg-primary rounded-full"
                   style={"width: #{progress_percent(@time_pos, @duration)}%"}
                 />
               </div>
