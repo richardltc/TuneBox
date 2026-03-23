@@ -25,6 +25,7 @@ import {LiveSocket} from "phoenix_live_view"
 import {hooks as colocatedHooks} from "phoenix-colocated/tunebox"
 import topbar from "../vendor/topbar"
 
+
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
@@ -39,6 +40,15 @@ window.addEventListener("phx:page-loading-stop", _info => topbar.hide())
 
 // connect if there are any LiveViews on the page
 liveSocket.connect()
+
+// Force a reconnect when returning to the tab so the UI syncs immediately
+// from the GenServer rather than replaying buffered diffs
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) {
+    liveSocket.disconnect()
+    liveSocket.connect()
+  }
+})
 
 // expose liveSocket on window for web console debug logs and latency simulation:
 // >> liveSocket.enableDebug()

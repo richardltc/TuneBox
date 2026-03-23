@@ -8,6 +8,9 @@ defmodule TuneBox.Config do
     field(:paused_time_pos, :float, default: 0.0)
     field(:paused_duration, :float, default: 0.0)
     field(:remove_completed_tracks, :boolean, default: false)
+    field(:show_convert, :boolean, default: false)
+    field(:show_history, :boolean, default: false)
+    field(:show_import, :boolean, default: false)
 
     belongs_to :paused_track, TuneBox.Music.Track
 
@@ -22,7 +25,10 @@ defmodule TuneBox.Config do
       :paused_track_id,
       :paused_time_pos,
       :paused_duration,
-      :remove_completed_tracks
+      :remove_completed_tracks,
+      :show_convert,
+      :show_history,
+      :show_import
     ])
   end
 
@@ -106,6 +112,22 @@ defmodule TuneBox.Config do
     get()
     |> changeset(%{remove_completed_tracks: value})
     |> TuneBox.Repo.update!()
+  end
+
+  def show_convert?, do: get().show_convert || false
+  def show_history?, do: get().show_history || false
+  def show_import?, do: get().show_import || false
+
+  def set_show_convert(value) when is_boolean(value) do
+    get() |> changeset(%{show_convert: value}) |> TuneBox.Repo.update!()
+  end
+
+  def set_show_history(value) when is_boolean(value) do
+    get() |> changeset(%{show_history: value}) |> TuneBox.Repo.update!()
+  end
+
+  def set_show_import(value) when is_boolean(value) do
+    get() |> changeset(%{show_import: value}) |> TuneBox.Repo.update!()
   end
 
   @doc """
