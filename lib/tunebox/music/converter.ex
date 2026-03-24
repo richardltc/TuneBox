@@ -23,7 +23,7 @@ defmodule TuneBox.Music.Converter do
 
     overwrite_flag = if overwrite, do: ["-y"], else: []
 
-    args = overwrite_flag ++ ["-i", source_path, "-c:a", "libopus", "-b:a", bitrate, "-vn", output_path]
+    args = overwrite_flag ++ ["-i", source_path, "-c:a", "libopus", "-b:a", bitrate, "-vn", "-map_metadata", "0", output_path]
 
     Logger.info("Converting #{source_path} -> #{output_path}")
 
