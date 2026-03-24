@@ -52,6 +52,9 @@ defmodule TuneboxWeb.PlayerLive do
       |> assign(:importing, false)
       |> assign(:import_error, nil)
       |> assign(:import_current_folder, nil)
+      |> assign(:import_log, [])
+      |> assign(:import_added_count, 0)
+      |> assign(:import_deleted_count, 0)
       |> assign(:total_tracks, Music.count_tracks())
       |> assign(:music_library_path, Config.music_library_path() || "")
       |> assign(:search_query, "")
@@ -240,6 +243,9 @@ defmodule TuneboxWeb.PlayerLive do
          socket
          |> assign(:importing, true)
          |> assign(:import_error, nil)
+         |> assign(:import_log, [])
+         |> assign(:import_added_count, 0)
+         |> assign(:import_deleted_count, 0)
          |> assign(:music_library_path, path)}
     end
   end
@@ -701,8 +707,22 @@ defmodule TuneboxWeb.PlayerLive do
     {:noreply, socket}
   end
 
-  def handle_info({:import_progress, folder}, socket) do
+  def handle_info({:import_progress, {:scanning, folder}}, socket) do
     {:noreply, assign(socket, :import_current_folder, folder)}
+  end
+
+  def handle_info({:import_progress, {:added, path}}, socket) do
+    log = [{:added, Path.basename(path)} | socket.assigns.import_log] |> Enum.take(200)
+    {:noreply, socket
+     |> assign(:import_log, log)
+     |> assign(:import_added_count, socket.assigns.import_added_count + 1)}
+  end
+
+  def handle_info({:import_progress, {:deleted, path}}, socket) do
+    log = [{:deleted, Path.basename(path)} | socket.assigns.import_log] |> Enum.take(200)
+    {:noreply, socket
+     |> assign(:import_log, log)
+     |> assign(:import_deleted_count, socket.assigns.import_deleted_count + 1)}
   end
 
   def handle_info(:track_ended, socket) do
@@ -1238,13 +1258,31 @@ defmodule TuneboxWeb.PlayerLive do
                   </button>
                 </form>
                 <p :if={@import_error} class="text-xs text-error mt-1">{@import_error}</p>
-                <p
-                  :if={@importing && @import_current_folder}
-                  class="text-xs opacity-50 truncate mt-1"
-                  title={@import_current_folder}
-                >
-                  {Path.relative_to(@import_current_folder, @music_library_path)}
-                </p>
+                <div :if={@importing || @import_log != []} class="mt-2">
+                  <p
+                    :if={@importing && @import_current_folder}
+                    class="text-xs opacity-50 truncate mb-1"
+                    title={@import_current_folder}
+                  >
+                    {Path.relative_to(@import_current_folder, @music_library_path)}
+                  </p>
+                  <div class="flex gap-3 text-xs mb-1">
+                    <span class="text-success font-medium">{@import_added_count} added</span>
+                    <span class="text-error font-medium">{@import_deleted_count} deleted</span>
+                  </div>
+                  <ul :if={@import_log != []} class="space-y-0.5 overflow-y-auto" style="max-height: 24rem">
+                    <li
+                      :for={{type, name} <- @import_log}
+                      class="flex items-center gap-2 px-3 py-2 rounded-lg"
+                    >
+                      <.icon
+                        name={if type == :added, do: "hero-plus-circle", else: "hero-minus-circle"}
+                        class={["w-4 h-4 flex-shrink-0", if(type == :added, do: "text-success", else: "text-error")]}
+                      />
+                      <span class="truncate text-sm">{name}</span>
+                    </li>
+                  </ul>
+                </div>
               </div>
             </div>
           </div>
