@@ -664,7 +664,7 @@ defmodule TuneboxWeb.PlayerLive do
             _ -> nil
           end
 
-          case TuneBox.Music.Converter.convert(path,
+          result = case TuneBox.Music.Converter.convert(path,
                  bitrate: bitrate,
                  delete_original: delete_original,
                  overwrite: overwrite
@@ -679,6 +679,9 @@ defmodule TuneboxWeb.PlayerLive do
             {:error, reason} ->
               {:error, Path.basename(path), reason}
           end
+
+          send(parent, {:convert_file_done, result, path})
+          result
         end)
 
       send(parent, {:convert_done, results})
@@ -758,6 +761,17 @@ defmodule TuneboxWeb.PlayerLive do
      socket
      |> assign(:flac_files, files)
      |> assign(:scanning_flac, false)}
+  end
+
+  def handle_info({:convert_file_done, {:ok, _, _, _}, path}, socket) do
+    {:noreply,
+     socket
+     |> assign(:flac_files, List.delete(socket.assigns.flac_files, path))
+     |> assign(:flac_selected, MapSet.delete(socket.assigns.flac_selected, path))}
+  end
+
+  def handle_info({:convert_file_done, _error_result, _path}, socket) do
+    {:noreply, socket}
   end
 
   def handle_info({:convert_done, results}, socket) do
