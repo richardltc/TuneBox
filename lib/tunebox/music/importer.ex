@@ -20,16 +20,22 @@ defmodule TuneBox.Music.Importer do
       TuneBox.Music.Importer.import("/home/user/Music")
   """
   def import(directory, on_progress \\ nil) do
-    prune_missing_files()
+    prune_missing_files(on_progress)
 
     directory
     |> scan_files()
     |> Enum.each(fn file_path ->
       if is_function(on_progress, 1) do
-        on_progress.(Path.dirname(file_path))
+        on_progress.({:scanning, Path.dirname(file_path)})
       end
 
-      import_file(file_path)
+      case import_file(file_path) do
+        {:ok, _} ->
+          if is_function(on_progress, 1), do: on_progress.({:added, file_path})
+
+        _ ->
+          :ok
+      end
     end)
   end
 
@@ -37,13 +43,14 @@ defmodule TuneBox.Music.Importer do
   Removes tracks from the database whose files no longer exist on disk.
   Associated queued_tracks are cascade-deleted automatically.
   """
-  def prune_missing_files do
+  def prune_missing_files(on_progress \\ nil) do
     Track
     |> Repo.all()
     |> Enum.each(fn track ->
       unless File.exists?(track.file_path) do
         Logger.info("Pruning missing file: #{track.file_path}")
         Repo.delete(track)
+        if is_function(on_progress, 1), do: on_progress.({:deleted, track.file_path})
       end
     end)
   end
