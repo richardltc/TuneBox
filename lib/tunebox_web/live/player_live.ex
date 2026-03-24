@@ -740,7 +740,11 @@ defmodule TuneboxWeb.PlayerLive do
         {:noreply, socket}
 
       pos ->
-        {:noreply, socket |> assign(:pending_time_pos, nil) |> apply_time_pos(pos)}
+        if socket.assigns.playback_state in [:playing, :paused] do
+          {:noreply, socket |> assign(:pending_time_pos, nil) |> apply_time_pos(pos)}
+        else
+          {:noreply, assign(socket, :pending_time_pos, nil)}
+        end
     end
   end
 
