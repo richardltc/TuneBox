@@ -26,11 +26,68 @@ import {hooks as colocatedHooks} from "phoenix-colocated/tunebox"
 import topbar from "../vendor/topbar"
 
 
+const SeekBar = {
+  mounted() {
+    this.dragging = false
+    this._pendingSeek = null
+    this._throttleTimer = null
+
+    this._seekTo = (e) => {
+      const rect = this.el.getBoundingClientRect()
+      const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
+      const duration = parseFloat(this.el.dataset.duration) || 0
+      if (duration > 0) {
+        this._pendingSeek = ratio * duration
+        if (!this._throttleTimer) {
+          this._flushSeek()
+          this._throttleTimer = setTimeout(() => {
+            this._throttleTimer = null
+            if (this._pendingSeek !== null) this._flushSeek()
+          }, 150)
+        }
+      }
+    }
+
+    this._flushSeek = () => {
+      if (this._pendingSeek !== null) {
+        this.pushEvent("seek", {position: this._pendingSeek})
+        this._pendingSeek = null
+      }
+    }
+
+    this._onMouseDown = (e) => {
+      this.dragging = true
+      this._seekTo(e)
+    }
+
+    this._onMouseMove = (e) => {
+      if (this.dragging) this._seekTo(e)
+    }
+
+    this._onMouseUp = () => {
+      if (this.dragging) {
+        this.dragging = false
+        this._flushSeek()
+      }
+    }
+
+    this.el.addEventListener("mousedown", this._onMouseDown)
+    document.addEventListener("mousemove", this._onMouseMove)
+    document.addEventListener("mouseup", this._onMouseUp)
+  },
+
+  destroyed() {
+    document.removeEventListener("mousemove", this._onMouseMove)
+    document.removeEventListener("mouseup", this._onMouseUp)
+    if (this._throttleTimer) clearTimeout(this._throttleTimer)
+  }
+}
+
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks},
+  hooks: {...colocatedHooks, SeekBar},
 })
 
 // Show progress bar on live navigation and form submits

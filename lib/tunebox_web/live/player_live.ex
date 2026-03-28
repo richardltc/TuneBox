@@ -1,5 +1,6 @@
 defmodule TuneboxWeb.PlayerLive do
   use TuneboxWeb, :live_view
+  require Logger
 
   alias TuneBox.Config
   alias TuneBox.Music
@@ -327,6 +328,11 @@ defmodule TuneboxWeb.PlayerLive do
 
   def handle_event("fast_forward", _params, socket) do
     Player.fast_forward()
+    {:noreply, socket}
+  end
+
+  def handle_event("seek", %{"position" => position}, socket) when is_number(position) do
+    Player.seek_absolute(position)
     {:noreply, socket}
   end
 
@@ -885,6 +891,19 @@ defmodule TuneboxWeb.PlayerLive do
     {:noreply, socket
      |> assign(:import_log, log)
      |> assign(:import_deleted_count, socket.assigns.import_deleted_count + 1)}
+  end
+
+  def handle_info({:playback_error, file_path}, socket) do
+    Logger.error("Playback failed for: #{file_path}")
+
+    {:noreply,
+     socket
+     |> assign(:playback_state, :stopped)
+     |> assign(:playing_track, nil)
+     |> assign(:time_pos, 0)
+     |> assign(:duration, 0)
+     |> put_flash(:error, "Could not play file: #{Path.basename(file_path)}")
+     |> stream(:tracks, socket.assigns.track_list, reset: true)}
   end
 
   def handle_info(:track_ended, socket) do
@@ -1995,9 +2014,14 @@ defmodule TuneboxWeb.PlayerLive do
               <span class="text-xs tabular-nums opacity-60 w-10 text-right">
                 {format_time(@time_pos)}
               </span>
-              <div class="flex-1 h-1.5 bg-base-300 rounded-full overflow-hidden">
+              <div
+                id="seek-bar"
+                phx-hook="SeekBar"
+                data-duration={@duration}
+                class="flex-1 h-3 bg-base-300 rounded-full overflow-hidden cursor-pointer"
+              >
                 <div
-                  class="h-full bg-primary rounded-full"
+                  class="h-full bg-primary rounded-full pointer-events-none"
                   style={"width: #{progress_percent(@time_pos, @duration)}%"}
                 />
               </div>
