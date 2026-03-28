@@ -124,7 +124,7 @@ defmodule TuneBox.Player do
 
   @impl true
   def handle_cast({:play, file}, state) do
-    load = %{command: ["loadfile", file, "replace", "start=0"]} |> Jason.encode!()
+    load = %{command: ["loadfile", file, "replace"]} |> Jason.encode!()
     unpause = %{command: ["set_property", "pause", false]} |> Jason.encode!()
     IO.puts("Sending command: #{load}")
     send_to_mpv(state.socket, load)
@@ -134,12 +134,14 @@ defmodule TuneBox.Player do
 
   @impl true
   def handle_cast({:play_from, file, seconds}, state) do
-    # Use mpv's loadfile "start" option to begin at a specific position
-    load = %{command: ["loadfile", file, "replace", "start=#{seconds}"]} |> Jason.encode!()
+    # Load the file first, then seek to position (compatible with all mpv versions)
+    load = %{command: ["loadfile", file, "replace"]} |> Jason.encode!()
     unpause = %{command: ["set_property", "pause", false]} |> Jason.encode!()
+    seek = %{command: ["seek", seconds, "absolute"]} |> Jason.encode!()
     IO.puts("Sending command: #{load}")
     send_to_mpv(state.socket, load)
     send_to_mpv(state.socket, unpause)
+    send_to_mpv(state.socket, seek)
     {:noreply, %{state | current_file: file, paused: false, last_ended_file: nil}}
   end
 
