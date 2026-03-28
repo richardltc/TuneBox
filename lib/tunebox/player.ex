@@ -25,20 +25,27 @@ defmodule TuneBox.Player do
 
     IO.puts("Starting MPV with socket: #{socket_path}")
 
+    # Unset display env vars to prevent mpv from connecting to Wayland/X11,
+    # which causes 100% CPU spin in --idle --no-video mode (mpv 0.40 bug)
+    env =
+      for {key, _} <- System.get_env(),
+          key in ["WAYLAND_DISPLAY", "DISPLAY"],
+          do: {String.to_charlist(key), false}
+
     port =
       Port.open({:spawn_executable, mpv_path}, [
         :binary,
         :exit_status,
         :stderr_to_stdout,
+        {:env, env},
         line: 1024,
         args: [
           "--idle=yes",
           "--input-ipc-server=#{socket_path}",
           "--no-video",
           "--no-terminal",
-          "--msg-level=all=v",
+          "--msg-level=all=warn",
           "--audio-device=auto",
-          "--audio-buffer=1",
           "--cache=yes",
           "--demuxer-max-bytes=50M",
           "--demuxer-readahead-secs=30",
@@ -59,7 +66,8 @@ defmodule TuneBox.Player do
        paused: true,
        time_pos: 0.0,
        duration: 0.0,
-       last_ended_file: nil
+       last_ended_file: nil,
+       observing: false
      }}
   end
 
@@ -86,7 +94,6 @@ defmodule TuneBox.Player do
         {:ok, socket} =
           :gen_tcp.connect({:local, state.socket_path}, 0, [:binary, packet: :line, active: true])
 
-        observe_properties(socket)
         {:noreply, %{state | socket: socket}}
 
       false ->
@@ -124,9 +131,9 @@ defmodule TuneBox.Player do
 
   @impl true
   def handle_cast({:play, file}, state) do
+    state = maybe_observe(state)
     load = %{command: ["loadfile", file, "replace"]} |> Jason.encode!()
     unpause = %{command: ["set_property", "pause", false]} |> Jason.encode!()
-    IO.puts("Sending command: #{load}")
     send_to_mpv(state.socket, load)
     send_to_mpv(state.socket, unpause)
     {:noreply, %{state | current_file: file, paused: false, time_pos: 0.0, last_ended_file: nil}}
@@ -134,11 +141,10 @@ defmodule TuneBox.Player do
 
   @impl true
   def handle_cast({:play_from, file, seconds}, state) do
-    # Load the file first, then seek to position (compatible with all mpv versions)
+    state = maybe_observe(state)
     load = %{command: ["loadfile", file, "replace"]} |> Jason.encode!()
     unpause = %{command: ["set_property", "pause", false]} |> Jason.encode!()
     seek = %{command: ["seek", seconds, "absolute"]} |> Jason.encode!()
-    IO.puts("Sending command: #{load}")
     send_to_mpv(state.socket, load)
     send_to_mpv(state.socket, unpause)
     send_to_mpv(state.socket, seek)
@@ -185,12 +191,18 @@ defmodule TuneBox.Player do
     {:noreply, state}
   end
 
-  defp observe_properties(socket) do
+  defp maybe_observe(%{observing: true} = state), do: state
+
+  defp maybe_observe(%{socket: socket} = state) when socket != nil do
     for {id, prop} <- [{1, "time-pos"}, {2, "duration"}] do
       cmd = %{command: ["observe_property", id, prop]} |> Jason.encode!()
       send_to_mpv(socket, cmd)
     end
+
+    %{state | observing: true}
   end
+
+  defp maybe_observe(state), do: state
 
   defp send_to_mpv(nil, _json_string) do
     IO.puts("Socket not ready yet")
