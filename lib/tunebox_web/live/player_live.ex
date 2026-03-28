@@ -86,6 +86,12 @@ defmodule TuneboxWeb.PlayerLive do
       |> assign(:show_import, Config.show_import?())
       |> assign(:show_history, Config.show_history?())
       |> assign(:history_tracks, if(Config.show_history?(), do: Music.list_recent_plays(), else: []))
+      |> assign(:show_playlists, Config.show_playlists?())
+      |> assign(:playlists, if(Config.show_playlists?(), do: Music.list_playlists(), else: []))
+      |> assign(:expanded_playlist, nil)
+      |> assign(:expanded_playlist_tracks, [])
+      |> assign(:playlist_name, "")
+      |> assign(:add_to_playlist_track, nil)
       |> assign(:play_recorded_for, nil)
       |> assign(:time_pos_timer, nil)
       |> assign(:pending_time_pos, nil)
@@ -558,6 +564,162 @@ defmodule TuneboxWeb.PlayerLive do
       end
 
     {:noreply, assign(socket, :show_history, show)}
+  end
+
+  def handle_event("toggle_playlists", _params, socket) do
+    show = !socket.assigns.show_playlists
+    Config.set_show_playlists(show)
+
+    socket =
+      if show do
+        assign(socket, :playlists, Music.list_playlists())
+      else
+        socket
+      end
+
+    {:noreply, assign(socket, :show_playlists, show)}
+  end
+
+  def handle_event("create_playlist", %{"name" => name}, socket) do
+    name = String.trim(name)
+
+    if name == "" do
+      {:noreply, put_flash(socket, :error, "Playlist name cannot be empty")}
+    else
+      case Music.create_playlist(name, []) do
+        {:ok, _playlist} ->
+          {:noreply,
+           socket
+           |> assign(:playlists, Music.list_playlists())
+           |> assign(:playlist_name, "")
+           |> put_flash(:info, "Playlist \"#{name}\" created")}
+
+        {:error, _} ->
+          {:noreply, put_flash(socket, :error, "Could not create playlist (name may already exist)")}
+      end
+    end
+  end
+
+  def handle_event("save_queue_as_playlist", _params, socket) do
+    track_ids = Enum.map(socket.assigns.track_list, & &1.id)
+    name = "Queue #{Calendar.strftime(NaiveDateTime.local_now(), "%Y-%m-%d %H:%M")}"
+
+    case Music.create_playlist(name, track_ids) do
+      {:ok, _playlist} ->
+        {:noreply,
+         socket
+         |> assign(:playlists, Music.list_playlists())
+         |> put_flash(:info, "Queue saved as \"#{name}\"")}
+
+      {:error, _} ->
+        {:noreply, put_flash(socket, :error, "Could not save queue as playlist")}
+    end
+  end
+
+  def handle_event("delete_playlist", %{"id" => id}, socket) do
+    playlist = Enum.find(socket.assigns.playlists, &(&1.id == String.to_integer(id)))
+
+    if playlist do
+      Music.delete_playlist(playlist)
+
+      socket =
+        socket
+        |> assign(:playlists, Music.list_playlists())
+        |> assign(
+          :expanded_playlist,
+          if(socket.assigns.expanded_playlist == playlist.id, do: nil, else: socket.assigns.expanded_playlist)
+        )
+        |> assign(
+          :expanded_playlist_tracks,
+          if(socket.assigns.expanded_playlist == playlist.id, do: [], else: socket.assigns.expanded_playlist_tracks)
+        )
+
+      {:noreply, socket}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  def handle_event("load_playlist", %{"id" => id}, socket) do
+    playlist_id = String.to_integer(id)
+    queued_tracks = Music.load_playlist_to_queue(playlist_id)
+    tracks = Enum.map(queued_tracks, & &1.track)
+    track_map = Map.new(tracks, &{&1.id, &1})
+
+    {:noreply,
+     socket
+     |> stream(:tracks, tracks, reset: true)
+     |> assign(:track_list, tracks)
+     |> assign(:track_map, track_map)
+     |> assign(:selected_track, nil)
+     |> assign(:playing_track, nil)
+     |> assign(:playback_state, :stopped)}
+  end
+
+  def handle_event("expand_playlist", %{"id" => id}, socket) do
+    playlist_id = String.to_integer(id)
+
+    if socket.assigns.expanded_playlist == playlist_id do
+      {:noreply,
+       socket
+       |> assign(:expanded_playlist, nil)
+       |> assign(:expanded_playlist_tracks, [])}
+    else
+      tracks = Music.list_playlist_tracks(playlist_id)
+
+      {:noreply,
+       socket
+       |> assign(:expanded_playlist, playlist_id)
+       |> assign(:expanded_playlist_tracks, tracks)}
+    end
+  end
+
+  def handle_event("remove_playlist_track", %{"id" => id}, socket) do
+    Music.remove_playlist_track(String.to_integer(id))
+    playlist_id = socket.assigns.expanded_playlist
+
+    {:noreply,
+     socket
+     |> assign(:playlists, Music.list_playlists())
+     |> assign(:expanded_playlist_tracks, if(playlist_id, do: Music.list_playlist_tracks(playlist_id), else: []))}
+  end
+
+  def handle_event("show_playlist_picker", %{"id" => id}, socket) do
+    track_id = String.to_integer(id)
+
+    new_id =
+      if socket.assigns.add_to_playlist_track == track_id, do: nil, else: track_id
+
+    {:noreply,
+     socket
+     |> assign(:add_to_playlist_track, new_id)
+     |> stream(:tracks, socket.assigns.track_list, reset: true)}
+  end
+
+  def handle_event("add_track_to_playlist", %{"playlist-id" => playlist_id, "track-id" => track_id}, socket) do
+    playlist_id = String.to_integer(playlist_id)
+    track_id = String.to_integer(track_id)
+
+    case Music.add_track_to_playlist(playlist_id, track_id) do
+      {:ok, _} ->
+        socket =
+          socket
+          |> assign(:add_to_playlist_track, nil)
+          |> assign(:playlists, Music.list_playlists())
+          |> stream(:tracks, socket.assigns.track_list, reset: true)
+
+        socket =
+          if socket.assigns.expanded_playlist == playlist_id do
+            assign(socket, :expanded_playlist_tracks, Music.list_playlist_tracks(playlist_id))
+          else
+            socket
+          end
+
+        {:noreply, put_flash(socket, :info, "Track added to playlist")}
+
+      :already_exists ->
+        {:noreply, put_flash(socket, :info, "Track already in playlist")}
+    end
   end
 
   def handle_event("toggle_flac_file", %{"path" => path}, socket) do
@@ -1451,6 +1613,113 @@ defmodule TuneboxWeb.PlayerLive do
               </div>
             </div>
           </div>
+
+          <%!-- Playlists accordion --%>
+          <div class="card bg-base-200 shadow-sm">
+            <div class="card-body p-0">
+              <button
+                class="flex items-center justify-between w-full px-4 py-3 text-sm font-medium hover:bg-base-300 rounded-box transition-colors"
+                phx-click="toggle_playlists"
+              >
+                <div class="flex items-center gap-2">
+                  <.icon name="hero-queue-list" class="w-4 h-4" />
+                  <span>Playlists</span>
+                </div>
+                <.icon name={if @show_playlists, do: "hero-chevron-up", else: "hero-chevron-down"} class="w-4 h-4" />
+              </button>
+              <div :if={@show_playlists} class="px-4 pb-4">
+                <%!-- Create playlist form --%>
+                <form phx-submit="create_playlist" class="flex gap-2 items-center mb-3">
+                  <input
+                    type="text"
+                    name="name"
+                    value={@playlist_name}
+                    placeholder="Playlist name"
+                    class="input input-bordered input-sm flex-1"
+                  />
+                  <button type="submit" class="btn btn-primary btn-sm flex-shrink-0" title="Create empty playlist">
+                    Create
+                  </button>
+                </form>
+
+                <%!-- Playlist list --%>
+                <div :if={@playlists == []} class="text-sm opacity-50 py-2">
+                  No playlists yet.
+                </div>
+                <ul class="flex flex-col gap-1 max-h-[420px] overflow-y-auto">
+                  <li :for={playlist <- @playlists}>
+                    <div
+                      class="flex items-center gap-2 py-1 text-sm cursor-pointer hover:bg-base-300 rounded px-2"
+                      phx-click="expand_playlist"
+                      phx-value-id={playlist.id}
+                    >
+                      <.icon
+                        name={if @expanded_playlist == playlist.id, do: "hero-chevron-down", else: "hero-chevron-right"}
+                        class="w-3 h-3 opacity-60 flex-shrink-0"
+                      />
+                      <span class="truncate font-medium flex-1">{playlist.name}</span>
+                      <span class="text-xs opacity-40 flex-shrink-0">
+                        {length(playlist.playlist_tracks)} tracks
+                      </span>
+                      <button
+                        class="btn btn-ghost btn-xs btn-square"
+                        title="Load into queue"
+                        phx-click="load_playlist"
+                        phx-value-id={playlist.id}
+                      >
+                        <.icon name="hero-play" class="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        class="btn btn-ghost btn-xs btn-square text-error"
+                        title="Delete playlist"
+                        phx-click="delete_playlist"
+                        phx-value-id={playlist.id}
+                      >
+                        <.icon name="hero-trash" class="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                    <%!-- Expanded playlist tracks --%>
+                    <ul :if={@expanded_playlist == playlist.id && @expanded_playlist_tracks != []} class="ml-5 mt-1 mb-2 flex flex-col gap-0.5">
+                      <li
+                        :for={pt <- @expanded_playlist_tracks}
+                        class="flex items-center gap-2 py-1 text-sm px-2 rounded hover:bg-base-300 cursor-pointer"
+                        phx-click="add_to_live"
+                        phx-value-id={pt.track.id}
+                        title={"Add to queue: #{pt.track.title}"}
+                      >
+                        <%= cond do %>
+                          <% pt.track.album && pt.track.album.cover_big -> %>
+                            <img
+                              src={"data:image/jpeg;base64,#{Base.encode64(pt.track.album.cover_big)}"}
+                              class="w-6 h-6 rounded object-cover flex-shrink-0"
+                            />
+                          <% pt.track.artist.picture_big -> %>
+                            <img
+                              src={"data:image/jpeg;base64,#{Base.encode64(pt.track.artist.picture_big)}"}
+                              class="w-6 h-6 rounded object-cover flex-shrink-0"
+                            />
+                          <% true -> %>
+                            <div class="w-6 h-6 rounded bg-base-300 flex-shrink-0" />
+                        <% end %>
+                        <div class="flex flex-col min-w-0 flex-1">
+                          <span class="truncate text-xs font-medium">{pt.track.title}</span>
+                          <span class="truncate text-xs opacity-60">{pt.track.artist.name}</span>
+                        </div>
+                        <button
+                          class="btn btn-ghost btn-xs btn-square text-error flex-shrink-0"
+                          title="Remove from playlist"
+                          phx-click="remove_playlist_track"
+                          phx-value-id={pt.id}
+                        >
+                          <.icon name="hero-x-mark" class="w-3 h-3" />
+                        </button>
+                      </li>
+                    </ul>
+                  </li>
+                </ul>
+              </div>
+            </div>
+          </div>
         </div>
 
         <%!-- Right: main content --%>
@@ -1468,7 +1737,14 @@ defmodule TuneboxWeb.PlayerLive do
                 >
                   <.icon name="hero-plus" class="w-4 h-4" />
                 </button>
-
+                <button
+                  :if={@track_list != []}
+                  class="btn btn-ghost btn-xs"
+                  title="Save queue as playlist"
+                  phx-click="save_queue_as_playlist"
+                >
+                  <.icon name="hero-queue-list" class="w-4 h-4" />
+                </button>
               </div>
             </div>
             <ul
@@ -1481,7 +1757,7 @@ defmodule TuneboxWeb.PlayerLive do
                 :for={{dom_id, track} <- @streams.tracks}
                 id={dom_id}
                 class={[
-                  "group flex items-center gap-2 px-3 py-2 rounded-lg cursor-pointer transition-colors",
+                  "group relative flex items-center gap-2 px-3 py-2 rounded-lg cursor-pointer transition-colors",
                   if(@selected_track && @selected_track.id == track.id,
                     do: "bg-primary text-white",
                     else: "hover:bg-base-300"
@@ -1559,12 +1835,40 @@ defmodule TuneboxWeb.PlayerLive do
                     <.icon name="hero-arrow-down" class="w-3.5 h-3.5" />
                   </button>
                   <button
+                    :if={@playlists != []}
+                    class={[
+                      "btn btn-ghost btn-xs btn-square",
+                      if(@add_to_playlist_track == track.id, do: "text-primary", else: "")
+                    ]}
+                    title="Add to playlist"
+                    phx-click="show_playlist_picker"
+                    phx-value-id={track.id}
+                  >
+                    <.icon name="hero-queue-list" class="w-3.5 h-3.5" />
+                  </button>
+                  <button
                     class="btn btn-ghost btn-xs btn-square text-error"
                     title="Remove"
                     phx-click="delete_track"
                     phx-value-id={track.id}
                   >
                     <.icon name="hero-trash" class="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                <%!-- Playlist picker dropdown --%>
+                <div
+                  :if={@add_to_playlist_track == track.id}
+                  class="absolute right-0 top-full mt-1 z-10 bg-base-100 border border-base-300 rounded-lg shadow-lg p-1 min-w-[10rem]"
+                >
+                  <button
+                    :for={playlist <- @playlists}
+                    class="flex items-center gap-2 w-full text-left px-3 py-1.5 text-sm rounded hover:bg-base-300 transition-colors"
+                    phx-click="add_track_to_playlist"
+                    phx-value-playlist-id={playlist.id}
+                    phx-value-track-id={track.id}
+                  >
+                    <.icon name="hero-queue-list" class="w-3 h-3 opacity-60" />
+                    <span class="truncate">{playlist.name}</span>
                   </button>
                 </div>
                 <div
