@@ -2,7 +2,7 @@ defmodule TuneBox.Music do
   import Ecto.Query
 
   alias TuneBox.Repo
-  alias TuneBox.Music.{Album, Artist, Track, QueuedTrack, PlayHistory}
+  alias TuneBox.Music.{Album, Artist, Track, QueuedTrack, PlayHistory, Playlist, PlaylistTrack}
 
   def list_artists do
     Artist |> order_by(:name) |> Repo.all()
@@ -252,6 +252,102 @@ defmodule TuneBox.Music do
   Moves a queued track up or down by swapping positions with its neighbor.
   Returns the updated list of queued tracks.
   """
+  # --- Playlists ---
+
+  def list_playlists do
+    Playlist
+    |> order_by(:name)
+    |> Repo.all()
+    |> Repo.preload(playlist_tracks: [])
+  end
+
+  def create_playlist(name, track_ids) when is_binary(name) and is_list(track_ids) do
+    now = NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
+
+    Repo.transaction(fn ->
+      playlist =
+        %Playlist{}
+        |> Playlist.changeset(%{name: name})
+        |> Repo.insert!()
+
+      entries =
+        track_ids
+        |> Enum.with_index(1)
+        |> Enum.map(fn {track_id, position} ->
+          %{
+            playlist_id: playlist.id,
+            track_id: track_id,
+            position: position,
+            inserted_at: now,
+            updated_at: now
+          }
+        end)
+
+      if entries != [], do: Repo.insert_all(PlaylistTrack, entries)
+
+      playlist
+    end)
+  end
+
+  def delete_playlist(%Playlist{} = playlist) do
+    Repo.delete(playlist)
+  end
+
+  def list_playlist_tracks(playlist_id) do
+    PlaylistTrack
+    |> where([pt], pt.playlist_id == ^playlist_id)
+    |> order_by(:position)
+    |> preload(track: [:artist, :album])
+    |> Repo.all()
+  end
+
+  def load_playlist_to_queue(playlist_id) do
+    playlist_tracks = list_playlist_tracks(playlist_id)
+    now = NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
+
+    entries =
+      playlist_tracks
+      |> Enum.with_index(1)
+      |> Enum.map(fn {pt, position} ->
+        %{track_id: pt.track_id, position: position, inserted_at: now, updated_at: now}
+      end)
+
+    Repo.transaction(fn ->
+      Repo.delete_all(QueuedTrack)
+      if entries != [], do: Repo.insert_all(QueuedTrack, entries)
+    end)
+
+    list_queued_tracks()
+  end
+
+  def add_track_to_playlist(playlist_id, track_id) do
+    existing =
+      PlaylistTrack
+      |> where([pt], pt.playlist_id == ^playlist_id and pt.track_id == ^track_id)
+      |> Repo.one()
+
+    if existing do
+      :already_exists
+    else
+      max_position =
+        PlaylistTrack
+        |> where([pt], pt.playlist_id == ^playlist_id)
+        |> select([pt], max(pt.position))
+        |> Repo.one() || 0
+
+      %PlaylistTrack{}
+      |> PlaylistTrack.changeset(%{playlist_id: playlist_id, track_id: track_id, position: max_position + 1})
+      |> Repo.insert()
+    end
+  end
+
+  def remove_playlist_track(playlist_track_id) do
+    case Repo.get(PlaylistTrack, playlist_track_id) do
+      nil -> :ok
+      pt -> Repo.delete(pt)
+    end
+  end
+
   def move_queued_track(track_id, direction) when direction in [:up, :down] do
     case Repo.get_by(QueuedTrack, track_id: track_id) do
       nil ->
