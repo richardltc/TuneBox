@@ -139,7 +139,7 @@ defmodule TuneBox.Music.Importer do
   end
 
   defp parse_mpv_output(output, file_path) do
-    lines = String.split(output, "\n")
+    lines = String.split(output, ~r/\r?\n/)
     tags = parse_file_tags(lines)
 
     metadata = %{
