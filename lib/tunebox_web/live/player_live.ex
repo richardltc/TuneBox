@@ -95,6 +95,10 @@ defmodule TuneboxWeb.PlayerLive do
       |> assign(:play_recorded_for, nil)
       |> assign(:time_pos_timer, nil)
       |> assign(:pending_time_pos, nil)
+      |> assign(:library_tracks, Music.list_all_tracks(:title, :asc))
+      |> assign(:library_sort_by, :title)
+      |> assign(:library_sort_dir, :asc)
+      |> assign(:library_add_to_playlist_track, nil)
 
     socket =
       if missed_ended_file && socket.assigns.player_available do
@@ -818,6 +822,71 @@ defmodule TuneboxWeb.PlayerLive do
     {:noreply, assign(socket, :convert_results, nil)}
   end
 
+  def handle_event("sort_library", %{"col" => col}, socket) do
+    col = String.to_existing_atom(col)
+    current_col = socket.assigns.library_sort_by
+    current_dir = socket.assigns.library_sort_dir
+
+    new_dir =
+      if col == current_col do
+        if current_dir == :asc, do: :desc, else: :asc
+      else
+        :asc
+      end
+
+    tracks = Music.list_all_tracks(col, new_dir)
+
+    {:noreply,
+     socket
+     |> assign(:library_tracks, tracks)
+     |> assign(:library_sort_by, col)
+     |> assign(:library_sort_dir, new_dir)}
+  end
+
+  def handle_event("library_add_to_queue", %{"id" => id}, socket) do
+    track_id = String.to_integer(id)
+    Music.add_queued_track(track_id)
+    queued_tracks = Music.list_queued_tracks()
+    tracks = Enum.map(queued_tracks, & &1.track)
+    track_map = Map.new(tracks, &{&1.id, &1})
+
+    {:noreply,
+     socket
+     |> stream(:tracks, tracks, reset: true)
+     |> assign(:track_list, tracks)
+     |> assign(:track_map, track_map)}
+  end
+
+  def handle_event("library_show_playlist_picker", %{"id" => id}, socket) do
+    track_id = String.to_integer(id)
+
+    new_val =
+      if socket.assigns.library_add_to_playlist_track == track_id, do: nil, else: track_id
+
+    {:noreply, assign(socket, :library_add_to_playlist_track, new_val)}
+  end
+
+  def handle_event("library_add_to_playlist", %{"playlist-id" => playlist_id, "track-id" => track_id}, socket) do
+    playlist_id = String.to_integer(playlist_id)
+    track_id = String.to_integer(track_id)
+    Music.add_track_to_playlist(playlist_id, track_id)
+
+    playlists = Music.list_playlists()
+
+    expanded_playlist_tracks =
+      if socket.assigns.expanded_playlist do
+        Music.list_playlist_tracks(socket.assigns.expanded_playlist)
+      else
+        []
+      end
+
+    {:noreply,
+     socket
+     |> assign(:library_add_to_playlist_track, nil)
+     |> assign(:playlists, playlists)
+     |> assign(:expanded_playlist_tracks, expanded_playlist_tracks)}
+  end
+
   defp do_convert(socket, paths, opts) do
     bitrate = socket.assigns.convert_bitrate
     delete_original = socket.assigns.convert_delete_original
@@ -982,6 +1051,8 @@ defmodule TuneboxWeb.PlayerLive do
       socket
       |> assign(:track_list, tracks)
       |> assign(:track_map, Map.new(tracks, &{&1.id, &1}))
+      |> assign(:total_tracks, Music.count_tracks())
+      |> assign(:library_tracks, Music.list_all_tracks(socket.assigns.library_sort_by, socket.assigns.library_sort_dir))
       |> stream(:tracks, tracks, reset: true)
 
     if Keyword.get(opts, :reset_selection, false) do
@@ -1722,8 +1793,157 @@ defmodule TuneboxWeb.PlayerLive do
           </div>
         </div>
 
-        <%!-- Right: main content --%>
+        <%!-- Middle: Track Management --%>
         <div class="flex flex-col gap-4 flex-1 min-w-0">
+          <div class="card bg-base-200 shadow-sm">
+            <div class="card-body p-4">
+              <div class="flex items-center justify-between mb-2">
+                <h2 class="card-title text-base">Library</h2>
+                <span class="text-xs opacity-50">{length(@library_tracks)} tracks</span>
+              </div>
+              <div class="overflow-x-auto overflow-y-auto" style="max-height: 70vh">
+                <table class="table table-xs table-pin-rows">
+                  <thead>
+                    <tr>
+                      <th class="cursor-pointer hover:bg-base-300 select-none" phx-click="sort_library" phx-value-col="title">
+                        <div class="flex items-center gap-1">
+                          Title
+                          <%= if @library_sort_by == :title do %>
+                            <.icon name={if @library_sort_dir == :asc, do: "hero-chevron-up-mini", else: "hero-chevron-down-mini"} class="w-3 h-3" />
+                          <% end %>
+                        </div>
+                      </th>
+                      <th class="cursor-pointer hover:bg-base-300 select-none" phx-click="sort_library" phx-value-col="artist">
+                        <div class="flex items-center gap-1">
+                          Artist
+                          <%= if @library_sort_by == :artist do %>
+                            <.icon name={if @library_sort_dir == :asc, do: "hero-chevron-up-mini", else: "hero-chevron-down-mini"} class="w-3 h-3" />
+                          <% end %>
+                        </div>
+                      </th>
+                      <th class="cursor-pointer hover:bg-base-300 select-none" phx-click="sort_library" phx-value-col="album">
+                        <div class="flex items-center gap-1">
+                          Album
+                          <%= if @library_sort_by == :album do %>
+                            <.icon name={if @library_sort_dir == :asc, do: "hero-chevron-up-mini", else: "hero-chevron-down-mini"} class="w-3 h-3" />
+                          <% end %>
+                        </div>
+                      </th>
+                      <th class="cursor-pointer hover:bg-base-300 select-none w-12 text-center" phx-click="sort_library" phx-value-col="track_number">
+                        <div class="flex items-center gap-1">
+                          #
+                          <%= if @library_sort_by == :track_number do %>
+                            <.icon name={if @library_sort_dir == :asc, do: "hero-chevron-up-mini", else: "hero-chevron-down-mini"} class="w-3 h-3" />
+                          <% end %>
+                        </div>
+                      </th>
+                      <th class="cursor-pointer hover:bg-base-300 select-none" phx-click="sort_library" phx-value-col="duration_seconds">
+                        <div class="flex items-center gap-1">
+                          Duration
+                          <%= if @library_sort_by == :duration_seconds do %>
+                            <.icon name={if @library_sort_dir == :asc, do: "hero-chevron-up-mini", else: "hero-chevron-down-mini"} class="w-3 h-3" />
+                          <% end %>
+                        </div>
+                      </th>
+                      <th class="cursor-pointer hover:bg-base-300 select-none" phx-click="sort_library" phx-value-col="file_format">
+                        <div class="flex items-center gap-1">
+                          Format
+                          <%= if @library_sort_by == :file_format do %>
+                            <.icon name={if @library_sort_dir == :asc, do: "hero-chevron-up-mini", else: "hero-chevron-down-mini"} class="w-3 h-3" />
+                          <% end %>
+                        </div>
+                      </th>
+                      <th class="cursor-pointer hover:bg-base-300 select-none" phx-click="sort_library" phx-value-col="play_count">
+                        <div class="flex items-center gap-1">
+                          Plays
+                          <%= if @library_sort_by == :play_count do %>
+                            <.icon name={if @library_sort_dir == :asc, do: "hero-chevron-up-mini", else: "hero-chevron-down-mini"} class="w-3 h-3" />
+                          <% end %>
+                        </div>
+                      </th>
+                      <th class="cursor-pointer hover:bg-base-300 select-none" phx-click="sort_library" phx-value-col="last_played">
+                        <div class="flex items-center gap-1">
+                          Last Played
+                          <%= if @library_sort_by == :last_played do %>
+                            <.icon name={if @library_sort_dir == :asc, do: "hero-chevron-up-mini", else: "hero-chevron-down-mini"} class="w-3 h-3" />
+                          <% end %>
+                        </div>
+                      </th>
+                      <th class="w-20">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr
+                      :for={track <- @library_tracks}
+                      class="hover:bg-base-300 transition-colors"
+                    >
+                      <td class="max-w-[12rem]">
+                        <span class="truncate block" title={track.title}>{track.title}</span>
+                      </td>
+                      <td class="max-w-[8rem]">
+                        <span class="truncate block" title={track.artist.name}>{track.artist.name}</span>
+                      </td>
+                      <td class="max-w-[8rem]">
+                        <span class="truncate block" title={if track.album, do: track.album.title, else: ""}>
+                          {if track.album, do: track.album.title, else: "—"}
+                        </span>
+                      </td>
+                      <td class="text-center">{track.track_number || "—"}</td>
+                      <td class="tabular-nums">{if track.duration_seconds, do: format_time(track.duration_seconds), else: "—"}</td>
+                      <td class="uppercase text-xs">{track.file_format || "—"}</td>
+                      <td class="tabular-nums">{track.play_count || 0}</td>
+                      <td class="text-xs opacity-60 whitespace-nowrap">
+                        {if track.last_played, do: Calendar.strftime(track.last_played, "%b %d, %H:%M"), else: "—"}
+                      </td>
+                      <td>
+                        <div class="flex items-center gap-0.5 relative">
+                          <button
+                            class="btn btn-ghost btn-xs btn-square"
+                            title="Add to queue"
+                            phx-click="library_add_to_queue"
+                            phx-value-id={track.id}
+                          >
+                            <.icon name="hero-plus" class="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            :if={@playlists != []}
+                            class={[
+                              "btn btn-ghost btn-xs btn-square",
+                              if(@library_add_to_playlist_track == track.id, do: "text-primary", else: "")
+                            ]}
+                            title="Add to playlist"
+                            phx-click="library_show_playlist_picker"
+                            phx-value-id={track.id}
+                          >
+                            <.icon name="hero-queue-list" class="w-3.5 h-3.5" />
+                          </button>
+                          <div
+                            :if={@library_add_to_playlist_track == track.id}
+                            class="absolute right-0 top-full mt-1 z-10 bg-base-100 border border-base-300 rounded-lg shadow-lg p-1 min-w-[10rem]"
+                          >
+                            <button
+                              :for={playlist <- @playlists}
+                              class="flex items-center gap-2 w-full text-left px-3 py-1.5 text-sm rounded hover:bg-base-300 transition-colors"
+                              phx-click="library_add_to_playlist"
+                              phx-value-playlist-id={playlist.id}
+                              phx-value-track-id={track.id}
+                            >
+                              <.icon name="hero-queue-list" class="w-3 h-3 opacity-60" />
+                              <span class="truncate">{playlist.name}</span>
+                            </button>
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <%!-- Right: Queue --%>
+        <div class="flex flex-col gap-4 w-96 flex-shrink-0">
         <%!-- Track list --%>
         <div class="card bg-base-200 shadow-sm">
           <div class="card-body p-4">

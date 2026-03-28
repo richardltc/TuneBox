@@ -348,6 +348,47 @@ defmodule TuneBox.Music do
     end
   end
 
+  @doc """
+  Returns all tracks in the library with artist and album preloaded,
+  sorted by the given column and direction. Includes last_played virtual field.
+  """
+  def list_all_tracks(sort_by \\ :title, sort_dir \\ :asc) do
+    last_played_subquery =
+      PlayHistory
+      |> group_by(:track_id)
+      |> select([ph], %{track_id: ph.track_id, last_played: max(ph.played_at)})
+
+    query =
+      Track
+      |> join(:left, [t], a in assoc(t, :artist), as: :artist)
+      |> join(:left, [t], al in assoc(t, :album), as: :album)
+      |> join(:left, [t], lp in subquery(last_played_subquery), on: lp.track_id == t.id, as: :last_played)
+      |> select_merge([t, last_played: lp], %{last_played: lp.last_played})
+      |> preload([artist: a, album: al], artist: a, album: al)
+
+    query
+    |> sort_tracks(sort_by, sort_dir)
+    |> Repo.all()
+  end
+
+  defp sort_tracks(query, :artist, dir) do
+    order_by(query, [t, artist: a], [{^dir, a.name}, {^dir, t.title}])
+  end
+
+  defp sort_tracks(query, :album, dir) do
+    order_by(query, [t, album: al], [{^dir, al.title}, {^dir, t.track_number}])
+  end
+
+  defp sort_tracks(query, :last_played, dir) do
+    order_by(query, [t, last_played: lp], [{^dir, lp.last_played}])
+  end
+
+  defp sort_tracks(query, field, dir) when field in [:title, :track_number, :duration_seconds, :play_count, :file_format, :bit_rate] do
+    order_by(query, [t], [{^dir, field(t, ^field)}])
+  end
+
+  defp sort_tracks(query, _field, _dir), do: order_by(query, [t], [asc: t.title])
+
   def move_queued_track(track_id, direction) when direction in [:up, :down] do
     case Repo.get_by(QueuedTrack, track_id: track_id) do
       nil ->
