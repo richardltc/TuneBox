@@ -229,6 +229,11 @@ defmodule TuneBox.Player do
           Phoenix.PubSub.broadcast(Tunebox.PubSub, "player:status", :track_ended)
           %{state | last_ended_file: state.current_file, current_file: nil, paused: true, time_pos: 0.0, duration: 0.0}
 
+        {:ok, %{"event" => "end-file", "reason" => "error"}} ->
+          Logger.error("mpv failed to play file: #{state.current_file}")
+          Phoenix.PubSub.broadcast(Tunebox.PubSub, "player:status", {:playback_error, state.current_file})
+          %{state | current_file: nil, paused: true, time_pos: 0.0, duration: 0.0}
+
         _ ->
           state
       end
