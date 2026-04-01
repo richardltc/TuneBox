@@ -1194,9 +1194,30 @@ defmodule TuneboxWeb.PlayerLive do
   defp progress_percent(pos, dur) when is_number(dur) and dur > 0, do: pos / dur * 100
   defp progress_percent(_, _), do: 0.0
 
+  defp background_image_data(selected_track) do
+    cond do
+      selected_track && selected_track.album && selected_track.album.cover_big ->
+        Base.encode64(selected_track.album.cover_big)
+
+      selected_track && selected_track.artist && selected_track.artist.picture_big ->
+        Base.encode64(selected_track.artist.picture_big)
+
+      true ->
+        nil
+    end
+  end
+
   def render(assigns) do
+    assigns = assign(assigns, :bg_image, background_image_data(assigns.selected_track))
+
     ~H"""
     <Layouts.app flash={@flash}>
+      <div
+        :if={@bg_image}
+        class="fixed inset-0 z-0 bg-cover bg-center bg-no-repeat opacity-15 transition-all duration-1000 pointer-events-none"
+        style={"background-image: url('data:image/jpeg;base64,#{@bg_image}'); filter: blur(20px) saturate(1.2); transform: scale(1.1);"}
+      >
+      </div>
       <div class="text-center mb-6">
         <div class="flex items-center justify-center gap-2">
           <h1 class="text-4xl font-bold tracking-tight">TuneBox</h1>
