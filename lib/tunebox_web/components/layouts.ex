@@ -35,7 +35,7 @@ defmodule TuneboxWeb.Layouts do
 
   def app(assigns) do
     ~H"""
-    <header class="navbar px-4 sm:px-6 lg:px-8">
+    <header class="navbar px-4 sm:px-6 lg:px-8 relative z-10">
       <div class="flex-1">
         <a href="/" class="flex-1 flex w-fit items-center gap-2">
           <img src={~p"/images/logo.svg"} width="36" />
@@ -54,8 +54,8 @@ defmodule TuneboxWeb.Layouts do
       </div>
     </header>
 
-    <main class="px-4 py-2 sm:px-6 lg:px-8">
-      <div class="mx-auto max-w-6xl space-y-4">
+    <main class="px-4 py-2 sm:px-6 lg:px-8 relative z-10">
+      <div class="mx-auto max-w-[120rem] space-y-4">
         {render_slot(@inner_block)}
       </div>
     </main>
